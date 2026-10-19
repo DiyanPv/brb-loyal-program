@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <defs>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffd978"/>
+      <stop offset="50%" stop-color="#d4af37"/>
+      <stop offset="100%" stop-color="#997a15"/>
+    </linearGradient>
+    <linearGradient id="darkBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#161c2c"/>
+      <stop offset="100%" stop-color="#0a0d14"/>
+    </linearGradient>
+  </defs>
+  <circle cx="50" cy="50" r="48" fill="url(#darkBg)" stroke="url(#goldGrad)" stroke-width="3"/>
+  <circle cx="50" cy="50" r="42" stroke="#d4af37" stroke-width="1" stroke-dasharray="2 3"/>
+  <!-- Razor / Scissors Barber Icon -->
+  <g transform="translate(25, 23) scale(0.5)" stroke="#ffd978" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- Crossed Straight Razor and Comb or Scissors -->
+    <path d="M20 80 L80 20 M80 20 L70 10 L55 25 M20 80 L30 90 L45 75" />
+    <path d="M80 80 L20 20 M20 20 L30 10 L45 25 M80 80 L70 90 L55 75" />
+    <circle cx="50" cy="50" r="8" fill="#d4af37" />
+  </g>
+</svg>
