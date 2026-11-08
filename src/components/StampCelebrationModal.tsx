@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { BarberStampIcon } from './BarberStampIcon';
 import { Sparkles, Gift, CheckCircle2 } from 'lucide-react';
 
@@ -22,10 +23,10 @@ export const StampCelebrationModal: React.FC<StampCelebrationModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
 
-    // Auto-dismiss after 2.8 seconds
+    // Auto-dismiss after 3.2 seconds
     const timer = setTimeout(() => {
       onClose();
-    }, 2800);
+    }, 3200);
 
     return () => clearTimeout(timer);
   }, [isOpen, onClose]);
@@ -34,10 +35,10 @@ export const StampCelebrationModal: React.FC<StampCelebrationModalProps> = ({
 
   const remaining = Math.max(0, requiredStamps - currentStamps);
 
-  return (
+  return createPortal(
     <div
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md cursor-pointer animate-fade-in"
+      className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md cursor-pointer animate-fade-in overscroll-none"
     >
       {/* Shockwave Rings in Background */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
@@ -47,7 +48,7 @@ export const StampCelebrationModal: React.FC<StampCelebrationModalProps> = ({
 
       <div
         onClick={(e) => e.stopPropagation()}
-        className="relative w-full max-w-sm bg-panel border-2 border-acid rounded-3xl p-7 text-center shadow-acid-glow-lg overflow-hidden animate-stamp-impact"
+        className="relative w-full max-w-sm bg-panel border-2 border-acid rounded-3xl p-7 text-center shadow-acid-glow-lg overflow-hidden animate-stamp-impact my-auto"
       >
         {/* Top Kicker Tag */}
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-acid text-ink font-mono text-[10px] uppercase font-black tracking-widest mb-4">
@@ -105,6 +106,7 @@ export const StampCelebrationModal: React.FC<StampCelebrationModalProps> = ({
           <span>Докосни за затваряне</span>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

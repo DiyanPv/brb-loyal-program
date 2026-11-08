@@ -126,7 +126,7 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
     }
   };
 
-  const qrPayload = `barber-loyalty://stamp/${customer.AuthToken}?name=${encodeURIComponent(customer.FullName)}&phone=${encodeURIComponent(customer.Phone)}&stamps=${customer.CurrentStamps}&id=${encodeURIComponent(customer.Id)}`;
+  const qrPayload = `barber-loyalty://stamp/${customer.AuthToken}?n=${encodeURIComponent(customer.FullName)}&p=${encodeURIComponent(customer.Phone)}&s=${customer.CurrentStamps}&id=${encodeURIComponent(customer.Id)}`;
 
   const copyQrValue = () => {
     sounds.playClick();
@@ -312,10 +312,10 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
           >
             <QRCodeSVG
               value={qrPayload}
-              size={showQrExpanded ? 240 : 170}
-              level="H"
-              includeMargin={false}
-              className="rounded transition-all duration-300"
+              size={showQrExpanded ? 260 : 200}
+              level="M"
+              includeMargin={true}
+              className="rounded-lg transition-all duration-300"
             />
 
             {/* NV Signature Corner Brackets */}

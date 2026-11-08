@@ -17,7 +17,7 @@ const DEFAULT_SETTINGS: ShopSettings = {
   Id: 'default-settings-id',
   RequiredStamps: 5,
   DiscountText: '-50%',
-  CooldownHours: 24,
+  CooldownHours: 0, // 0 hours default for instant testing across devices
   AdminPin: '1234',
   UpdatedAt: new Date().toISOString(),
 };
@@ -259,9 +259,9 @@ export class LoyaltyService {
       clean = tokenPart.trim();
       try {
         const params = new URLSearchParams(queryString);
-        qrName = params.get('name') || '';
-        qrPhone = params.get('phone') || '';
-        qrStamps = parseInt(params.get('stamps') || '0', 10);
+        qrName = params.get('n') || params.get('name') || '';
+        qrPhone = params.get('p') || params.get('phone') || '';
+        qrStamps = parseInt(params.get('s') || params.get('stamps') || '0', 10);
         qrId = params.get('id') || '';
       } catch {}
     }

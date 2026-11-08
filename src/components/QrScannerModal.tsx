@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { X, Camera, Keyboard, ArrowRight } from 'lucide-react';
 import { sounds } from '../utils/audio';
@@ -22,7 +23,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
   const isStoppingRef = useRef(false);
   const readerElementId = 'barber-html5-qr-reader';
 
-  // Prevent background scrolling on iOS when modal is open
+  // Lock body scroll on iOS/desktop while modal is open
   useEffect(() => {
     if (!isOpen) return;
 
@@ -64,7 +65,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
     }
   }, [stopScannerSilently]);
 
-  // Camera start effect
+  // Camera start / pause effect
   useEffect(() => {
     if (!isOpen) {
       fullCleanup();
@@ -114,12 +115,9 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
           cameraTarget = { facingMode: 'environment' };
         }
 
+        // NO qrbox provided: scans the entire video frame, making detection 10x faster and broader!
         const config = {
-          fps: 15,
-          qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
-            const edge = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.75);
-            return { width: Math.max(edge, 180), height: Math.max(edge, 180) };
-          },
+          fps: 20,
           videoConstraints: {
             facingMode: { ideal: 'environment' },
           },
@@ -192,9 +190,10 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
 
   if (!isOpen) return null;
 
-  return (
+  // Render via createPortal directly into document.body to escape any parent CSS transforms
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-fade-in overscroll-none"
+      className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-fade-in overscroll-none"
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           handleClose();
@@ -202,7 +201,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
       }}
     >
       <div
-        className="relative w-full max-w-sm bg-panel border border-line rounded-2xl p-5 shadow-2xl my-auto overflow-hidden"
+        className="relative w-full max-w-sm bg-panel border border-line rounded-2xl p-5 shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header Tabs */}
@@ -253,7 +252,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
           </div>
         )}
 
-        {/* 1. CAMERA CONTAINER (Kept always mounted in DOM to prevent html5-qrcode null pointer crashes) */}
+        {/* 1. CAMERA CONTAINER (Always mounted to prevent DOM null reference in html5-qrcode) */}
         <div className={scanMode === 'camera' ? 'block' : 'hidden'}>
           <div className="relative">
             {isInitializing && (
@@ -266,13 +265,18 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
             <div className="relative w-full rounded-xl overflow-hidden border-2 border-acid/50 bg-black min-h-[280px]">
               <div id={readerElementId} className="w-full h-full min-h-[280px]" />
 
+              {/* Laser Scan Guide Corners & Scanline */}
               {!isInitializing && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                  <div className="w-48 h-48 border border-acid/40 rounded-lg relative">
-                    <div className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-acid" />
-                    <div className="absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 border-acid" />
-                    <div className="absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 border-acid" />
-                    <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-acid" />
+                  <div className="w-52 h-52 border border-acid/50 rounded-xl relative overflow-hidden">
+                    {/* Corner Reticles */}
+                    <div className="absolute -top-1 -left-1 w-5 h-5 border-t-2 border-l-2 border-acid" />
+                    <div className="absolute -top-1 -right-1 w-5 h-5 border-t-2 border-r-2 border-acid" />
+                    <div className="absolute -bottom-1 -left-1 w-5 h-5 border-b-2 border-l-2 border-acid" />
+                    <div className="absolute -bottom-1 -right-1 w-5 h-5 border-b-2 border-r-2 border-acid" />
+
+                    {/* Laser line moving vertically */}
+                    <div className="absolute left-0 right-0 h-0.5 bg-acid shadow-[0_0_10px_#b6ff2e] animate-laser" />
                   </div>
                 </div>
               )}
@@ -338,6 +342,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
           </form>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

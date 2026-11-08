@@ -272,3 +272,24 @@
   touch-action: none !important;
   -webkit-overflow-scrolling: auto !important;
 }
+
+
+/* Laser scanning line animation */
+@keyframes laserScan {
+  0% {
+    top: 0%;
+    opacity: 0.8;
+  }
+  50% {
+    top: 95%;
+    opacity: 1;
+  }
+  100% {
+    top: 0%;
+    opacity: 0.8;
+  }
+}
+
+.animate-laser {
+  animation: laserScan 2.2s ease-in-out infinite;
+}
