@@ -2,6 +2,9 @@ export interface Customer {
   Id: string;
   FullName: string;
   Phone: string;
+  Email?: string;
+  Username?: string;
+  Password?: string;
   CurrentStamps: number;
   TotalVisits: number;
   HasRewardAvailable: boolean;

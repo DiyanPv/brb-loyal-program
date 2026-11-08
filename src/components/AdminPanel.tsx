@@ -258,6 +258,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToClient }) => {
       (c) =>
         c.FullName.toLowerCase().includes(q) ||
         c.Phone.includes(q) ||
+        (c.Email && c.Email.toLowerCase().includes(q)) ||
+        (c.Username && c.Username.toLowerCase().includes(q)) ||
         c.AuthToken.toLowerCase().includes(q)
     );
   }, [customers, searchQuery]);
@@ -720,13 +722,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToClient }) => {
                           <p className="font-bold text-bone text-sm font-sans">
                             {customer.FullName}
                           </p>
-                          <a
-                            href={`tel:${customer.Phone}`}
-                            className="text-acid hover:underline flex items-center gap-1 text-[11px] mt-0.5"
-                          >
-                            <Phone className="w-3 h-3 text-brand" />
-                            <span>{customer.Phone}</span>
-                          </a>
+                          <div className="flex flex-wrap items-center gap-2 text-[11px] mt-0.5">
+                            <a
+                              href={`tel:${customer.Phone}`}
+                              className="text-acid hover:underline flex items-center gap-1"
+                            >
+                              <Phone className="w-3 h-3 text-brand" />
+                              <span>{customer.Phone}</span>
+                            </a>
+                            {customer.Email && (
+                              <span className="text-mute">
+                                • {customer.Email}
+                              </span>
+                            )}
+                            {customer.Username && !customer.Email && (
+                              <span className="text-mute">
+                                • @{customer.Username}
+                              </span>
+                            )}
+                          </div>
                         </td>
 
                         <td className="py-3 px-4">

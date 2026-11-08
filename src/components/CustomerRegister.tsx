@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Customer } from '../types';
 import { LoyaltyService } from '../services/loyaltyService';
 import { setStoredAuthToken } from '../utils/session';
-import { User, Phone, ShieldCheck, ArrowRight } from 'lucide-react';
+import { User, Phone, ShieldCheck, ArrowRight, Lock, Mail, LogIn, UserPlus } from 'lucide-react';
 import { sounds } from '../utils/audio';
 
 interface CustomerRegisterProps {
@@ -10,17 +10,60 @@ interface CustomerRegisterProps {
 }
 
 export const CustomerRegister: React.FC<CustomerRegisterProps> = ({ onCustomerLoaded }) => {
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+
+  // Login form state
+  const [loginIdentifier, setLoginIdentifier] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+
+  // Register form state
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
+  const [emailOrUsername, setEmailOrUsername] = useState('');
+  const [registerPassword, setRegisterPassword] = useState('');
+
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Handle Login
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+
+    const cleanIdentifier = loginIdentifier.trim();
+    if (!cleanIdentifier) {
+      setErrorMsg('Моля, въведете имейл, потребителско име или телефон.');
+      return;
+    }
+
+    setIsLoading(true);
+    sounds.playClick();
+
+    try {
+      const res = await LoyaltyService.loginCustomer(cleanIdentifier, loginPassword.trim() || undefined);
+      if (res.success && res.customer) {
+        setStoredAuthToken(res.customer.AuthToken);
+        sounds.playRewardSound();
+        onCustomerLoaded(res.customer);
+      } else {
+        setErrorMsg(res.message || 'Грешка при вход. Моля, проверете данните си.');
+      }
+    } catch (err) {
+      console.error('Login error:', err);
+      setErrorMsg('Възникна грешка при вход. Моля, опитайте отново.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle Register
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
     const cleanName = fullName.trim();
     const cleanPhone = phone.trim().replace(/[\s\-()]/g, '');
+    const cleanEmailOrUser = emailOrUsername.trim();
 
     if (!cleanName || cleanName.length < 3) {
       setErrorMsg('Моля, въведете две имена (напр. Александър Петров)');
@@ -36,7 +79,18 @@ export const CustomerRegister: React.FC<CustomerRegisterProps> = ({ onCustomerLo
     sounds.playClick();
 
     try {
-      const customer = await LoyaltyService.registerCustomer(cleanName, cleanPhone);
+      const isEmail = cleanEmailOrUser.includes('@');
+      const email = isEmail ? cleanEmailOrUser : undefined;
+      const username = !isEmail && cleanEmailOrUser ? cleanEmailOrUser : undefined;
+
+      const customer = await LoyaltyService.registerCustomer(
+        cleanName,
+        cleanPhone,
+        email,
+        username,
+        registerPassword.trim() || undefined
+      );
+
       setStoredAuthToken(customer.AuthToken);
       sounds.playRewardSound();
       onCustomerLoaded(customer);
@@ -72,115 +126,224 @@ export const CustomerRegister: React.FC<CustomerRegisterProps> = ({ onCustomerLo
         </div>
       </div>
 
-      {/* Registration Card in NV Card Style */}
+      {/* Registration & Login Card in NV Card Style */}
       <div className="card-nv relative border border-line bg-panel p-6 sm:p-8 rounded-2xl shadow-2xl">
-        {/* Subtle acid accent corner tag */}
+        {/* Auth Mode Switcher Tabs */}
         <div className="flex items-center justify-between pb-4 mb-6 border-b border-line">
-          <div>
-            <span className="font-mono text-xs uppercase tracking-[0.2em] text-bone font-bold">
-              Вход / Нова Карта
-            </span>
-            <p className="text-[11px] text-mute font-mono mt-0.5">
-              // БЕЗ ПАРОЛА • 1 КЛИК
-            </p>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                sounds.playClick();
+                setAuthMode('login');
+                setErrorMsg(null);
+              }}
+              className={`chip !text-xs font-mono ${authMode === 'login' ? 'chip-active' : ''}`}
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span>Вход</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                sounds.playClick();
+                setAuthMode('register');
+                setErrorMsg(null);
+              }}
+              className={`chip !text-xs font-mono ${authMode === 'register' ? 'chip-active' : ''}`}
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>Нова Карта</span>
+            </button>
           </div>
-          <span className="chip chip-active text-[10px]">
+
+          <span className="chip text-[10px] text-acid border-line">
             NV VIP PASS
           </span>
         </div>
 
         {errorMsg && (
-          <div className="mb-5 p-3 bg-red-950/50 border border-red-500/50 text-red-300 text-xs font-mono flex items-center space-x-2 animate-shake">
+          <div className="mb-5 p-3 bg-red-950/50 border border-red-500/50 text-red-300 text-xs font-mono flex items-center space-x-2 animate-shake rounded-xl">
             <span>⚠</span>
             <span>{errorMsg}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-5">
-          {/* Full Name */}
-          <div>
-            <label className="label-nv">
-              Две Имена (Клиент)
-            </label>
-            <div className="relative">
-              <input
-                type="text"
-                required
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="напр. Александър Петров"
-                className="field rounded-xl font-sans"
-              />
-              <User className="w-4 h-4 text-mute absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        {/* 1. LOGIN FORM */}
+        {authMode === 'login' ? (
+          <form onSubmit={handleLoginSubmit} className="space-y-4 animate-fade-in font-sans">
+            <div>
+              <label className="label-nv">
+                Имейл, Потребителско Име или Телефон
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  required
+                  value={loginIdentifier}
+                  onChange={(e) => setLoginIdentifier(e.target.value)}
+                  placeholder="напр. 0897827242 или marin@example.com"
+                  className="field rounded-xl font-mono text-sm"
+                />
+                <User className="w-4 h-4 text-mute absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
             </div>
-          </div>
 
-          {/* Phone Number */}
-          <div>
-            <label className="label-nv">
-              Телефонен Номер
-            </label>
-            <div className="relative">
-              <input
-                type="tel"
-                required
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="0888 123 456"
-                className="field rounded-xl font-mono"
-              />
-              <Phone className="w-4 h-4 text-mute absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <div>
+              <label className="label-nv flex items-center justify-between">
+                <span>Парола</span>
+                <span className="text-[10px] text-mute font-normal normal-case">(ако имате зададена)</span>
+              </label>
+              <div className="relative">
+                <input
+                  type="password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="field rounded-xl font-mono text-sm"
+                />
+                <Lock className="w-4 h-4 text-mute absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
             </div>
-            <p className="text-[11px] text-mute mt-2 flex items-center gap-1.5 font-mono">
-              <ShieldCheck className="w-3.5 h-3.5 text-acid" />
-              <span>Ако вече имаш карта, печатите се възстановяват автоматично.</span>
-            </p>
-          </div>
 
-          {/* Submit Button with NV Shears Watermark */}
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="btn btn-acid w-full relative overflow-hidden rounded-xl !py-4 text-sm mt-3 disabled:opacity-60 cursor-pointer"
-          >
-            {/* NV Barbers Shears SVG Silhouette Watermark */}
-            <svg
-              viewBox="0 0 64 64"
-              className="pointer-events-none absolute -right-2 top-1/2 h-14 w-14 -translate-y-1/2 rotate-[24deg] text-ink/15"
-              fill="none"
-              aria-hidden="true"
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="btn btn-acid w-full rounded-xl !py-4 text-sm mt-4 disabled:opacity-60 cursor-pointer shadow-acid-hard"
             >
-              <g transform="translate(32,38)">
-                <g transform="rotate(-8)">
-                  <path
-                    d="M -1.4 1.4 L -5.5 -26.4 Q -6 -29.5 -3.4 -30 Q -1.3 -30.3 -0.9 -27.5 L 2.5 -0.4 Q 2.8 1.6 0.5 2 Z"
-                    fill="currentColor"
-                  />
-                  <circle cx="6.9" cy="12.8" r="4.6" stroke="currentColor" strokeWidth="2.7" fill="none" />
-                </g>
-                <g transform="rotate(8)">
-                  <path
-                    d="M 1.4 1.4 L 5.5 -26.4 Q 6 -29.5 3.4 -30 Q 1.3 -30.3 0.9 -27.5 L -2.5 -0.4 Q -2.8 1.6 -0.5 2 Z"
-                    fill="currentColor"
-                  />
-                  <circle cx="-6.9" cy="12.8" r="4.6" stroke="currentColor" strokeWidth="2.7" fill="none" />
-                </g>
-                <circle r="2.5" fill="currentColor" />
-              </g>
-            </svg>
-
-            <span className="relative z-10 inline-flex items-center gap-2">
               {isLoading ? (
-                <span>Зареждане...</span>
+                <span>Влизане...</span>
               ) : (
-                <>
-                  <span>Отвори дигиталната карта</span>
+                <span className="inline-flex items-center gap-2">
+                  <span>Влез в твоята карта</span>
                   <ArrowRight className="w-4 h-4" />
-                </>
+                </span>
               )}
-            </span>
-          </button>
-        </form>
+            </button>
+
+            <div className="pt-3 text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setAuthMode('register');
+                }}
+                className="text-xs font-mono text-mute hover:text-acid transition-colors underline"
+              >
+                Нямаш карта още? Регистрирай нова карта тук →
+              </button>
+            </div>
+          </form>
+        ) : (
+          /* 2. REGISTRATION FORM */
+          <form onSubmit={handleRegisterSubmit} className="space-y-4 animate-fade-in font-sans">
+            {/* Full Name */}
+            <div>
+              <label className="label-nv">
+                Две Имена (Клиент) *
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  required
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="напр. Александър Петров"
+                  className="field rounded-xl font-sans"
+                />
+                <User className="w-4 h-4 text-mute absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+            </div>
+
+            {/* Phone Number */}
+            <div>
+              <label className="label-nv">
+                Телефонен Номер *
+              </label>
+              <div className="relative">
+                <input
+                  type="tel"
+                  required
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="0888 123 456"
+                  className="field rounded-xl font-mono"
+                />
+                <Phone className="w-4 h-4 text-mute absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+            </div>
+
+            {/* Email / Username (Optional) */}
+            <div>
+              <label className="label-nv flex items-center justify-between">
+                <span>Имейл или Потребителско Име</span>
+                <span className="text-[10px] text-mute font-normal normal-case">(по избор)</span>
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={emailOrUsername}
+                  onChange={(e) => setEmailOrUsername(e.target.value)}
+                  placeholder="напр. alex@gmail.com или alex99"
+                  className="field rounded-xl font-sans"
+                />
+                <Mail className="w-4 h-4 text-mute absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+            </div>
+
+            {/* Password (Optional) */}
+            <div>
+              <label className="label-nv flex items-center justify-between">
+                <span>Парола за защита на картата</span>
+                <span className="text-[10px] text-mute font-normal normal-case">(по избор)</span>
+              </label>
+              <div className="relative">
+                <input
+                  type="password"
+                  value={registerPassword}
+                  onChange={(e) => setRegisterPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="field rounded-xl font-mono"
+                />
+                <Lock className="w-4 h-4 text-mute absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+            </div>
+
+            <p className="text-[11px] text-mute mt-1 flex items-center gap-1.5 font-mono">
+              <ShieldCheck className="w-3.5 h-3.5 text-acid shrink-0" />
+              <span>Ако вече имаш карта с този телефон или имейл, печатите се възстановяват автоматично.</span>
+            </p>
+
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="btn btn-acid w-full rounded-xl !py-4 text-sm mt-4 disabled:opacity-60 cursor-pointer shadow-acid-hard"
+            >
+              {isLoading ? (
+                <span>Регистрация...</span>
+              ) : (
+                <span className="inline-flex items-center gap-2">
+                  <span>Създай дигитална карта</span>
+                  <ArrowRight className="w-4 h-4" />
+                </span>
+              )}
+            </button>
+
+            <div className="pt-3 text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setAuthMode('login');
+                }}
+                className="text-xs font-mono text-mute hover:text-acid transition-colors underline"
+              >
+                Вече имаш акаунт? Влез тук →
+              </button>
+            </div>
+          </form>
+        )}
 
         <div className="mt-6 pt-4 border-t border-line text-center">
           <p className="font-mono text-[11px] text-mute">

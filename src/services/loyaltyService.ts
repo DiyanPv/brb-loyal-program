@@ -258,6 +258,73 @@ export class LoyaltyService {
     return customers.find((c) => c.Phone.replace(/[\s\-()]/g, '') === cleanPhone) || null;
   }
 
+  static async getCustomerByEmailOrUsername(identifier: string): Promise<Customer | null> {
+    if (!identifier) return null;
+    const clean = identifier.trim().toLowerCase();
+
+    if (isFirebaseConfigured()) {
+      try {
+        const qEmail = query(collection(db, 'Customers'), where('Email', '==', clean), limit(1));
+        const snapEmail = await getDocs(qEmail);
+        if (!snapEmail.empty) {
+          return snapEmail.docs[0].data() as Customer;
+        }
+
+        const qUser = query(collection(db, 'Customers'), where('Username', '==', clean), limit(1));
+        const snapUser = await getDocs(qUser);
+        if (!snapUser.empty) {
+          return snapUser.docs[0].data() as Customer;
+        }
+      } catch (err) {
+        console.warn('Firestore getCustomerByEmailOrUsername failed:', err);
+      }
+    }
+
+    const all = await this.getAllCustomers();
+    return all.find(
+      (c) =>
+        (c.Email && c.Email.toLowerCase() === clean) ||
+        (c.Username && c.Username.toLowerCase() === clean)
+    ) || null;
+  }
+
+  static async loginCustomer(
+    identifier: string,
+    password?: string
+  ): Promise<{ success: boolean; customer?: Customer; message?: string }> {
+    if (!identifier) {
+      return { success: false, message: 'Моля, въведете имейл, потребителско име или телефон.' };
+    }
+
+    const clean = identifier.trim();
+
+    // 1. Try by phone
+    let found = await this.getCustomerByPhone(clean);
+
+    // 2. Try by email or username
+    if (!found) {
+      found = await this.getCustomerByEmailOrUsername(clean);
+    }
+
+    // 3. Try by exact AuthToken or Id
+    if (!found) {
+      found = (await this.getCustomerByAuthToken(clean)) || (await this.getCustomerById(clean));
+    }
+
+    if (!found) {
+      return { success: false, message: 'Не е намерен клиент с тези данни. Моля, регистрирайте се.' };
+    }
+
+    // If customer has a password and password was provided, verify
+    if (found.Password && password) {
+      if (found.Password !== password.trim()) {
+        return { success: false, message: 'Грешна парола! Моля, опитайте отново.' };
+      }
+    }
+
+    return { success: true, customer: found };
+  }
+
   static async getCustomerByIdentifier(identifier: string): Promise<Customer | null> {
     if (!identifier) return null;
     let clean = identifier.trim();
@@ -353,13 +420,44 @@ export class LoyaltyService {
     return null;
   }
 
-  static async registerCustomer(fullName: string, phone: string): Promise<Customer> {
+  static async registerCustomer(
+    fullName: string,
+    phone: string,
+    email?: string,
+    username?: string,
+    password?: string
+  ): Promise<Customer> {
     const cleanPhone = phone.trim().replace(/[\s\-()]/g, '');
     const cleanName = fullName.trim();
+    const cleanEmail = email ? email.trim().toLowerCase() : '';
+    const cleanUsername = username ? username.trim().toLowerCase() : '';
+    const cleanPassword = password ? password.trim() : '';
 
-    // Check if customer already exists by phone
-    const existing = await this.getCustomerByPhone(cleanPhone);
+    // Check if customer already exists by phone, email, or username
+    let existing = await this.getCustomerByPhone(cleanPhone);
+    if (!existing && cleanEmail) {
+      existing = await this.getCustomerByEmailOrUsername(cleanEmail);
+    }
+    if (!existing && cleanUsername) {
+      existing = await this.getCustomerByEmailOrUsername(cleanUsername);
+    }
+
     if (existing) {
+      const updates: Partial<Customer> = {};
+      if (cleanEmail && !existing.Email) updates.Email = cleanEmail;
+      if (cleanUsername && !existing.Username) updates.Username = cleanUsername;
+      if (cleanPassword && !existing.Password) updates.Password = cleanPassword;
+      if (cleanName && existing.FullName !== cleanName) updates.FullName = cleanName;
+
+      if (Object.keys(updates).length > 0) {
+        const merged: Customer = { ...existing, ...updates };
+        if (isFirebaseConfigured()) {
+          try {
+            await setDoc(doc(db, 'Customers', existing.Id), merged, { merge: true });
+          } catch {}
+        }
+        return merged;
+      }
       return existing;
     }
 
@@ -369,6 +467,9 @@ export class LoyaltyService {
       Id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'c_' + Date.now(),
       FullName: cleanName,
       Phone: cleanPhone,
+      Email: cleanEmail || undefined,
+      Username: cleanUsername || undefined,
+      Password: cleanPassword || undefined,
       CurrentStamps: 0,
       TotalVisits: 0,
       HasRewardAvailable: false,
