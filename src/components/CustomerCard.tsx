@@ -126,7 +126,7 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
     }
   };
 
-  const qrPayload = `barber-loyalty://stamp/${customer.AuthToken}`;
+  const qrPayload = `barber-loyalty://stamp/${customer.AuthToken}?name=${encodeURIComponent(customer.FullName)}&phone=${encodeURIComponent(customer.Phone)}&stamps=${customer.CurrentStamps}&id=${encodeURIComponent(customer.Id)}`;
 
   const copyQrValue = () => {
     sounds.playClick();

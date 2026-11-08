@@ -22,59 +22,57 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
   const isStoppingRef = useRef(false);
   const readerElementId = 'barber-html5-qr-reader';
 
-  // Prevent background scrolling on iOS and desktop when modal is active
+  // Prevent background scrolling on iOS when modal is open
   useEffect(() => {
     if (!isOpen) return;
 
     const originalOverflow = document.body.style.overflow;
-    const originalTouchAction = document.body.style.touchAction;
-
-    document.body.classList.add('modal-lock-body');
-    document.documentElement.classList.add('modal-lock-body');
     document.body.style.overflow = 'hidden';
-    document.body.style.touchAction = 'none';
-
-    const preventScroll = (e: TouchEvent) => {
-      const target = e.target as HTMLElement;
-      if (target?.tagName !== 'INPUT' && target?.tagName !== 'TEXTAREA') {
-        e.preventDefault();
-      }
-    };
-
-    window.addEventListener('touchmove', preventScroll, { passive: false });
 
     return () => {
-      document.body.classList.remove('modal-lock-body');
-      document.documentElement.classList.remove('modal-lock-body');
       document.body.style.overflow = originalOverflow;
-      document.body.style.touchAction = originalTouchAction;
-      window.removeEventListener('touchmove', preventScroll);
     };
   }, [isOpen]);
 
-  const cleanupScanner = useCallback(async () => {
+  const stopScannerSilently = useCallback(async () => {
     if (isStoppingRef.current) return;
     const currentScanner = scannerRef.current;
     if (currentScanner) {
       isStoppingRef.current = true;
       try {
         if (currentScanner.isScanning) {
-          await currentScanner.stop();
+          await currentScanner.stop().catch(() => {});
         }
-        currentScanner.clear();
       } catch (err) {
-        console.warn('Scanner cleanup warning:', err);
+        console.warn('Silent scanner stop error:', err);
       } finally {
-        scannerRef.current = null;
         isStoppingRef.current = false;
       }
     }
   }, []);
 
-  // Camera start / stop effect
+  const fullCleanup = useCallback(async () => {
+    await stopScannerSilently();
+    try {
+      if (scannerRef.current) {
+        scannerRef.current.clear();
+      }
+    } catch (err) {
+      console.warn('Scanner clear error:', err);
+    } finally {
+      scannerRef.current = null;
+    }
+  }, [stopScannerSilently]);
+
+  // Camera start effect
   useEffect(() => {
-    if (!isOpen || scanMode !== 'camera') {
-      cleanupScanner();
+    if (!isOpen) {
+      fullCleanup();
+      return;
+    }
+
+    if (scanMode !== 'camera') {
+      stopScannerSilently();
       return;
     }
 
@@ -84,46 +82,42 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
 
     const initScanner = async () => {
       try {
-        // Wait for DOM container to be fully rendered
-        await new Promise((resolve) => setTimeout(resolve, 250));
+        await new Promise((resolve) => setTimeout(resolve, 200));
         if (!isMounted) return;
 
         const container = document.getElementById(readerElementId);
         if (!container) return;
 
-        // Clean previous instances
-        if (scannerRef.current) {
-          await cleanupScanner();
+        if (!scannerRef.current) {
+          scannerRef.current = new Html5Qrcode(readerElementId, {
+            formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+            verbose: false,
+          });
         }
 
-        const html5QrCode = new Html5Qrcode(readerElementId, {
-          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-          verbose: false,
-        });
-        scannerRef.current = html5QrCode;
+        const html5QrCode = scannerRef.current;
+        if (html5QrCode.isScanning) {
+          setIsInitializing(false);
+          return;
+        }
 
-        // Find best back camera or use environment facing mode
         let cameraTarget: any = { facingMode: 'environment' };
         try {
-          const cameras = await Html5Qrcode.getCameras();
+          const cameras = await Html5Qrcode.getCameras().catch(() => []);
           if (cameras && cameras.length > 0) {
             const backCam = cameras.find((c) =>
               /back|rear|environment|primary/i.test(c.label)
             );
-            if (backCam) {
-              cameraTarget = backCam.id;
-            } else {
-              cameraTarget = cameras[cameras.length - 1].id;
-            }
+            cameraTarget = backCam ? backCam.id : cameras[cameras.length - 1].id;
           }
         } catch {
-          // Fallback to { facingMode: "environment" }
+          cameraTarget = { facingMode: 'environment' };
         }
 
         const config = {
           fps: 15,
           qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
-            const edge = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.72);
+            const edge = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.75);
             return { width: Math.max(edge, 180), height: Math.max(edge, 180) };
           },
           videoConstraints: {
@@ -137,21 +131,18 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
           (decodedText) => {
             sounds.playStampSound();
             if (typeof window !== 'undefined' && 'vibrate' in navigator) {
-              try {
-                navigator.vibrate(100);
-              } catch {}
+              try { navigator.vibrate(100); } catch {}
             }
-            cleanupScanner();
-            onScanSuccess(decodedText);
-            onClose();
+            stopScannerSilently().then(() => {
+              onScanSuccess(decodedText);
+              onClose();
+            });
           },
           () => {}
         );
 
         if (isMounted) {
           setIsInitializing(false);
-
-          // Fix iOS Safari video playback and playsinline
           setTimeout(() => {
             const video = document.querySelector<HTMLVideoElement>(`#${readerElementId} video`);
             if (video) {
@@ -164,12 +155,12 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
           }, 150);
         }
       } catch (err: any) {
-        console.warn('Camera QR start error:', err);
+        console.warn('Camera start error:', err);
         if (isMounted) {
           setIsInitializing(false);
           setScanMode('manual');
           setErrorMsg(
-            'Камерата не може да се стартира (липсват права в Safari/Chrome). Можете да въведете кода или телефона ръчно.'
+            'Камерата не може да се стартира на това устройство. Можете да въведете кода или телефона от картата ръчно.'
           );
         }
       }
@@ -179,9 +170,9 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
 
     return () => {
       isMounted = false;
-      cleanupScanner();
+      stopScannerSilently();
     };
-  }, [isOpen, scanMode, cleanupScanner, onClose, onScanSuccess]);
+  }, [isOpen, scanMode, fullCleanup, stopScannerSilently, onClose, onScanSuccess]);
 
   const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -189,13 +180,13 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
     if (!clean) return;
 
     sounds.playStampSound();
-    await cleanupScanner();
+    await fullCleanup();
     onScanSuccess(clean);
     onClose();
   };
 
   const handleClose = async () => {
-    await cleanupScanner();
+    await fullCleanup();
     onClose();
   };
 
@@ -203,7 +194,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-fade-in overscroll-none touch-none select-none"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-fade-in overscroll-none"
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           handleClose();
@@ -211,12 +202,11 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
       }}
     >
       <div
-        className="relative w-full max-w-sm bg-panel border border-line rounded-2xl p-5 shadow-2xl overflow-hidden my-auto"
+        className="relative w-full max-w-sm bg-panel border border-line rounded-2xl p-5 shadow-2xl my-auto overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Top Header & Mode Toggles */}
+        {/* Header Tabs */}
         <div className="flex items-center justify-between pb-3 mb-3 border-b border-line">
-          {/* Mode Switcher Tabs */}
           <div className="flex items-center gap-1.5">
             <button
               type="button"
@@ -236,7 +226,6 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
               type="button"
               onClick={() => {
                 sounds.playClick();
-                cleanupScanner();
                 setScanMode('manual');
               }}
               className={`chip !text-[11px] font-mono ${
@@ -257,7 +246,6 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
           </button>
         </div>
 
-        {/* Informative notification if camera was blocked */}
         {errorMsg && scanMode === 'manual' && (
           <div className="mb-4 p-3 rounded-xl bg-coal border border-line text-xs font-mono text-mute flex items-start space-x-2">
             <span className="text-acid">ℹ</span>
@@ -265,8 +253,8 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
           </div>
         )}
 
-        {/* 1. CAMERA SCANNER MODE */}
-        {scanMode === 'camera' ? (
+        {/* 1. CAMERA CONTAINER (Kept always mounted in DOM to prevent html5-qrcode null pointer crashes) */}
+        <div className={scanMode === 'camera' ? 'block' : 'hidden'}>
           <div className="relative">
             {isInitializing && (
               <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-panel/95 rounded-xl font-mono min-h-[280px]">
@@ -275,11 +263,9 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
               </div>
             )}
 
-            {/* Video Viewport Container */}
             <div className="relative w-full rounded-xl overflow-hidden border-2 border-acid/50 bg-black min-h-[280px]">
               <div id={readerElementId} className="w-full h-full min-h-[280px]" />
 
-              {/* Laser Scan Guide Corners */}
               {!isInitializing && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <div className="w-48 h-48 border border-acid/40 rounded-lg relative">
@@ -298,7 +284,6 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
                 type="button"
                 onClick={() => {
                   sounds.playClick();
-                  cleanupScanner();
                   setScanMode('manual');
                 }}
                 className="text-acid hover:underline flex items-center gap-1 font-bold"
@@ -308,8 +293,10 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
               </button>
             </div>
           </div>
-        ) : (
-          /* 2. MANUAL NUMBER / CODE ENTRY MODE */
+        </div>
+
+        {/* 2. MANUAL NUMBER / CODE ENTRY FORM */}
+        <div className={scanMode === 'manual' ? 'block' : 'hidden'}>
           <form onSubmit={handleManualSubmit} className="space-y-4 py-2 font-mono animate-fade-in">
             <div className="text-center pb-2">
               <div className="w-12 h-12 rounded-full bg-coal border border-line flex items-center justify-center mx-auto mb-2 text-acid">
@@ -330,7 +317,6 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
               <input
                 type="text"
                 required
-                autoFocus
                 value={manualCodeInput}
                 onChange={(e) => setManualCodeInput(e.target.value)}
                 placeholder="напр. #A1B2C3 или 0888123456"
@@ -350,7 +336,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
               Системата разпознава автоматично кода на картата или телефонния номер.
             </div>
           </form>
-        )}
+        </div>
       </div>
     </div>
   );

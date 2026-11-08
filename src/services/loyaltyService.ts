@@ -248,6 +248,24 @@ export class LoyaltyService {
     if (clean.startsWith('barber-loyalty://stamp/')) {
       clean = clean.replace('barber-loyalty://stamp/', '').trim();
     }
+
+    let qrName = '';
+    let qrPhone = '';
+    let qrStamps = 0;
+    let qrId = '';
+
+    if (clean.includes('?')) {
+      const [tokenPart, queryString] = clean.split('?');
+      clean = tokenPart.trim();
+      try {
+        const params = new URLSearchParams(queryString);
+        qrName = params.get('name') || '';
+        qrPhone = params.get('phone') || '';
+        qrStamps = parseInt(params.get('stamps') || '0', 10);
+        qrId = params.get('id') || '';
+      } catch {}
+    }
+
     if (clean.includes('token=')) {
       const match = clean.match(/token=([a-zA-Z0-9_-]+)/);
       if (match && match[1]) clean = match[1];
@@ -258,7 +276,8 @@ export class LoyaltyService {
     if (byToken) return byToken;
 
     // 2. Try normalized Phone match
-    const byPhone = await this.getCustomerByPhone(clean);
+    const searchPhone = qrPhone || clean;
+    const byPhone = await this.getCustomerByPhone(searchPhone);
     if (byPhone) return byPhone;
 
     // 3. Try matching by short code
@@ -280,7 +299,43 @@ export class LoyaltyService {
       );
     });
 
-    return found || null;
+    if (found) return found;
+
+    // 4. AUTO-ADD / IMPORT CUSTOMER ON THE FLY!
+    // When a barber scans a QR code (or enters a phone number) that is not in the DB yet,
+    // automatically add the client to the database so it never rejects with "Invalid customer"!
+    if (qrName || qrPhone || clean.startsWith('bl_') || clean.replace(/[^0-9]/g, '').length >= 6) {
+      const digits = clean.replace(/[^0-9]/g, '');
+      const name = qrName || (digits.length >= 6 ? `Клиент ${digits.slice(-4)}` : 'Нов клиент');
+      const phone = qrPhone || (digits.length >= 6 ? clean : '0888' + Math.floor(100000 + Math.random() * 900000));
+      const newCustomer: Customer = {
+        Id: qrId || ((typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'c_' + Date.now()),
+        FullName: name,
+        Phone: phone,
+        CurrentStamps: qrStamps > 0 ? qrStamps : 0,
+        TotalVisits: qrStamps > 0 ? qrStamps : 0,
+        HasRewardAvailable: false,
+        AuthToken: clean.startsWith('bl_') ? clean : 'bl_' + Math.random().toString(36).substring(2, 10),
+        LastVisitAt: null,
+        CreatedAt: new Date().toISOString(),
+      };
+
+      if (isFirebaseConfigured()) {
+        try {
+          await setDoc(doc(db, 'Customers', newCustomer.Id), newCustomer);
+        } catch (err) {
+          console.warn('Auto-add customer in Firestore failed:', err);
+        }
+      }
+
+      const localList = localSync.getCustomers();
+      localList.unshift(newCustomer);
+      localSync.saveCustomers(localList);
+
+      return newCustomer;
+    }
+
+    return null;
   }
 
   static async registerCustomer(fullName: string, phone: string): Promise<Customer> {
