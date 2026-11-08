@@ -114,15 +114,18 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
     const pollTimer = setInterval(async () => {
       try {
         const fresh = await LoyaltyService.getCustomerById(customer.Id);
-        if (fresh) {
-          if (
-            fresh.CurrentStamps !== prevStampsRef.current ||
-            fresh.HasRewardAvailable !== prevRewardRef.current ||
-            fresh.TotalVisits !== prevVisitsRef.current ||
-            fresh.LastVisitAt !== customer.LastVisitAt
-          ) {
-            handleCustomerUpdate(fresh);
-          }
+        if (!fresh) {
+          // If customer was deleted/reset in Firestore, log out immediately
+          onLogout();
+          return;
+        }
+        if (
+          fresh.CurrentStamps !== prevStampsRef.current ||
+          fresh.HasRewardAvailable !== prevRewardRef.current ||
+          fresh.TotalVisits !== prevVisitsRef.current ||
+          fresh.LastVisitAt !== customer.LastVisitAt
+        ) {
+          handleCustomerUpdate(fresh);
         }
       } catch (err) {
         console.warn('Customer poll error:', err);
@@ -169,16 +172,16 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
     }
   };
 
-  // Self-healing sync: verify this customer exists in Firestore; if not, persist immediately
+  // Verify this customer exists in Firestore; if cleared, log out cleanly
   useEffect(() => {
     if (customer && customer.Id) {
       LoyaltyService.getCustomerById(customer.Id).then((found) => {
         if (!found) {
-          LoyaltyService.registerCustomerByName(customer.FullName, customer.Password);
+          onLogout();
         }
       });
     }
-  }, [customer.Id]);
+  }, [customer.Id, onLogout]);
 
   // Rich QR payload containing ID, Name and Token for 100% fail-proof identification
   const qrPayload = JSON.stringify({

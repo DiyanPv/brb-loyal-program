@@ -210,18 +210,13 @@ export class LoyaltyService {
         if (snap.exists()) {
           return snap.data() as Customer;
         }
+        return null;
       } catch (err) {
         console.warn('Firestore getCustomerById failed:', err);
       }
     }
     const customers = localSync.getCustomers();
-    const local = customers.find((c) => c.Id === id) || null;
-    if (local && isFirebaseConfigured()) {
-      try {
-        await setDoc(doc(db, 'Customers', local.Id), local, { merge: true });
-      } catch {}
-    }
-    return local;
+    return customers.find((c) => c.Id === id) || null;
   }
 
   static async getCustomerByAuthToken(token: string): Promise<Customer | null> {
@@ -235,19 +230,14 @@ export class LoyaltyService {
         if (!snap.empty) {
           return snap.docs[0].data() as Customer;
         }
+        return null;
       } catch (err) {
         console.warn('Firestore getCustomerByAuthToken failed:', err);
       }
     }
 
     const customers = localSync.getCustomers();
-    const local = customers.find((c) => c.AuthToken === cleanToken) || null;
-    if (local && isFirebaseConfigured()) {
-      try {
-        await setDoc(doc(db, 'Customers', local.Id), local, { merge: true });
-      } catch {}
-    }
-    return local;
+    return customers.find((c) => c.AuthToken === cleanToken) || null;
   }
 
   static async getCustomerByPhone(phone: string): Promise<Customer | null> {
@@ -544,13 +534,11 @@ export class LoyaltyService {
 
     if (found) return found;
 
-    // 8. Auto-provision any scanned ID, token, or name so scanning NEVER fails!
-    const fallbackId = targetId || (clean.length >= 8 ? clean : null);
-    if (fallbackId || targetName) {
-      const healedId = fallbackId || ((typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'c_' + Date.now());
+    // 8. Auto-provision ONLY if scanned QR payload explicitly contains both an ID and Name
+    if (targetName && targetName.length >= 2 && targetId) {
       const healedCustomer: Customer = {
-        Id: healedId,
-        FullName: targetName || 'Клиент',
+        Id: targetId,
+        FullName: targetName,
         Password: '',
         Phone: '',
         CurrentStamps: 0,
