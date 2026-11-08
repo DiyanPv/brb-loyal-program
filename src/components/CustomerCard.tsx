@@ -356,10 +356,13 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
           >
             <QRCodeSVG
               value={qrPayload}
-              size={showQrExpanded ? 260 : 210}
-              level="M"
+              size={showQrExpanded ? 280 : 220}
+              level="L"
+              bgColor="#ffffff"
+              fgColor="#000000"
               includeMargin={true}
-              className="rounded-lg transition-all duration-300 mx-auto"
+              marginSize={3}
+              className="rounded-lg transition-all duration-300 mx-auto block"
             />
           </div>
 

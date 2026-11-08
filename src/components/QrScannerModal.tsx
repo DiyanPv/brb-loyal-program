@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import jsQR from 'jsqr';
-import { X, Camera, Keyboard, ArrowRight, RefreshCw } from 'lucide-react';
+import { X, Camera, Keyboard, ArrowRight, RefreshCw, Image as ImageIcon } from 'lucide-react';
 import { sounds } from '../utils/audio';
 
 interface QrScannerModalProps {
@@ -20,13 +20,14 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
-  const [cameraIndex, setCameraIndex] = useState(0);
+  const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animFrameId = useRef<number | null>(null);
   const hasScannedRef = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Lock body scroll on iOS/desktop while modal is open
   useEffect(() => {
@@ -65,12 +66,44 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
     }
   }, []);
 
-  // Scan loop powered by jsQR
+  const handleFoundCode = useCallback(
+    (codeText: string) => {
+      if (hasScannedRef.current) return;
+      hasScannedRef.current = true;
+
+      sounds.playStampSound();
+      if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+        try {
+          navigator.vibrate([80, 40, 100]);
+        } catch {}
+      }
+
+      stopCamera();
+      onScanSuccess(codeText);
+      onClose();
+    },
+    [onScanSuccess, onClose, stopCamera]
+  );
+
+  // Scan loop: tests hardware BarcodeDetector, center full-res crop, then full frame
   const startScanningLoop = useCallback(() => {
     let lastScanTimestamp = 0;
-    const scanIntervalMs = 75; // Scan ~13 times per second
+    const scanIntervalMs = 70; // ~14 fps
 
-    const scanFrame = (timestamp: number) => {
+    const scanCanvas = (ctx: CanvasRenderingContext2D, width: number, height: number): string | null => {
+      try {
+        const imgData = ctx.getImageData(0, 0, width, height);
+        const qr = jsQR(imgData.data, width, height, {
+          inversionAttempts: 'attemptBoth',
+        });
+        if (qr && qr.data && qr.data.trim()) {
+          return qr.data.trim();
+        }
+      } catch {}
+      return null;
+    };
+
+    const scanFrame = async (timestamp: number) => {
       if (hasScannedRef.current) return;
 
       if (timestamp - lastScanTimestamp >= scanIntervalMs) {
@@ -84,38 +117,48 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
           const vHeight = video.videoHeight;
 
           if (vWidth > 0 && vHeight > 0) {
-            // Keep aspect ratio but cap max processing dimension to 640px for 5ms decode latency
-            const maxDimension = 640;
-            const scale = Math.min(1, maxDimension / Math.max(vWidth, vHeight));
-            const targetWidth = Math.floor(vWidth * scale);
-            const targetHeight = Math.floor(vHeight * scale);
-
-            canvas.width = targetWidth;
-            canvas.height = targetHeight;
+            // 1. Try Hardware-accelerated BarcodeDetector if browser supports it (instant on Chrome/Android)
+            if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
+              try {
+                const detector = new (window as any).BarcodeDetector({ formats: ['qr_code'] });
+                const barcodes = await detector.detect(video);
+                if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
+                  handleFoundCode(barcodes[0].rawValue.trim());
+                  return;
+                }
+              } catch {}
+            }
 
             const ctx = canvas.getContext('2d', { willReadFrequently: true });
             if (ctx) {
-              ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
-              const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+              // 2. High-Res Center Crop: 75% center region at 100% full uncompressed resolution
+              // Maximizes module sharpness when aimed at another phone's screen
+              const minEdge = Math.min(vWidth, vHeight);
+              const cropSize = Math.floor(minEdge * 0.75);
+              const cropX = Math.floor((vWidth - cropSize) / 2);
+              const cropY = Math.floor((vHeight - cropSize) / 2);
 
-              const qrCode = jsQR(imageData.data, imageData.width, imageData.height, {
-                inversionAttempts: 'attemptBoth',
-              });
+              canvas.width = cropSize;
+              canvas.height = cropSize;
+              ctx.drawImage(video, cropX, cropY, cropSize, cropSize, 0, 0, cropSize, cropSize);
 
-              if (qrCode && qrCode.data && qrCode.data.trim()) {
-                hasScannedRef.current = true;
-                const scannedText = qrCode.data.trim();
+              let found = scanCanvas(ctx, cropSize, cropSize);
 
-                sounds.playStampSound();
-                if (typeof window !== 'undefined' && 'vibrate' in navigator) {
-                  try {
-                    navigator.vibrate([80, 40, 100]);
-                  } catch {}
-                }
+              // 3. Wide Frame fallback (scaled down if not found in center)
+              if (!found) {
+                const maxDim = 640;
+                const scale = Math.min(1, maxDim / Math.max(vWidth, vHeight));
+                const fullW = Math.floor(vWidth * scale);
+                const fullH = Math.floor(vHeight * scale);
 
-                stopCamera();
-                onScanSuccess(scannedText);
-                onClose();
+                canvas.width = fullW;
+                canvas.height = fullH;
+                ctx.drawImage(video, 0, 0, fullW, fullH);
+                found = scanCanvas(ctx, fullW, fullH);
+              }
+
+              if (found) {
+                handleFoundCode(found);
                 return;
               }
             }
@@ -127,7 +170,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
     };
 
     animFrameId.current = requestAnimationFrame(scanFrame);
-  }, [onScanSuccess, onClose, stopCamera]);
+  }, [handleFoundCode]);
 
   // Start native camera
   useEffect(() => {
@@ -150,30 +193,17 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
       try {
         stopCamera();
 
-        // Check if mediaDevices is supported
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           throw new Error('getUserMedia not supported in this browser environment');
         }
 
+        // Always request standard environment facingMode unless user explicitly chose a camera
         let constraints: MediaStreamConstraints = {
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
+          video: selectedCameraId
+            ? { deviceId: { exact: selectedCameraId } }
+            : { facingMode: { ideal: 'environment' } },
           audio: false,
         };
-
-        if (availableCameras.length > 1 && availableCameras[cameraIndex]) {
-          constraints = {
-            video: {
-              deviceId: { exact: availableCameras[cameraIndex].deviceId },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
-            audio: false,
-          };
-        }
 
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         if (!isMounted) {
@@ -188,6 +218,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
           videoRef.current.setAttribute('playsinline', 'true');
           videoRef.current.setAttribute('webkit-playsinline', 'true');
           videoRef.current.muted = true;
+          videoRef.current.defaultMuted = true;
           await videoRef.current.play();
 
           if (isMounted) {
@@ -196,15 +227,14 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
           }
         }
 
-        // Enumerate video devices if multiple rear cameras are available
-        if (availableCameras.length === 0 && navigator.mediaDevices.enumerateDevices) {
-          try {
-            const allDevices = await navigator.mediaDevices.enumerateDevices();
-            const videoInputs = allDevices.filter((d) => d.kind === 'videoinput');
-            if (videoInputs.length > 0 && isMounted) {
+        // Discover available cameras once for the flip button (WITHOUT restarting the stream)
+        if (navigator.mediaDevices.enumerateDevices) {
+          navigator.mediaDevices.enumerateDevices().then((devices) => {
+            const videoInputs = devices.filter((d) => d.kind === 'videoinput');
+            if (videoInputs.length > 1 && isMounted) {
               setAvailableCameras(videoInputs);
             }
-          } catch {}
+          }).catch(() => {});
         }
       } catch (err: any) {
         console.warn('Native camera start error:', err);
@@ -224,7 +254,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
       isMounted = false;
       stopCamera();
     };
-  }, [isOpen, scanMode, cameraIndex, availableCameras, startScanningLoop, stopCamera]);
+  }, [isOpen, scanMode, selectedCameraId, startScanningLoop, stopCamera]);
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -245,7 +275,40 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
   const toggleCamera = () => {
     if (availableCameras.length <= 1) return;
     sounds.playClick();
-    setCameraIndex((prev) => (prev + 1) % availableCameras.length);
+    const currentIdx = availableCameras.findIndex((c) => c.deviceId === selectedCameraId);
+    const nextIdx = (currentIdx + 1) % availableCameras.length;
+    setSelectedCameraId(availableCameras[nextIdx].deviceId);
+  };
+
+  // Image File / Photo Snapshot Fallback Handler
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          const imgData = ctx.getImageData(0, 0, img.width, img.height);
+          const code = jsQR(imgData.data, img.width, img.height, {
+            inversionAttempts: 'attemptBoth',
+          });
+          if (code && code.data && code.data.trim()) {
+            handleFoundCode(code.data.trim());
+          } else {
+            alert('В избраната снимка не беше открит QR код. Опитайте отново или въведете кода ръчно.');
+          }
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
   };
 
   if (!isOpen) return null;
@@ -270,6 +333,16 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
     >
       {/* Hidden offscreen canvas for pixel extraction */}
       <canvas ref={canvasRef} className="hidden" />
+
+      {/* Hidden file input for photo upload / snap fallback */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleFileChange}
+        className="hidden"
+      />
 
       <div
         className="relative w-full max-w-sm bg-panel border border-line rounded-2xl p-4 sm:p-5 shadow-2xl overflow-hidden my-auto max-h-[92dvh] flex flex-col justify-between"
@@ -373,7 +446,16 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
             </div>
 
             <div className="mt-3 flex items-center justify-between text-xs font-mono text-mute">
-              <span>// Насочи към QR кода</span>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="text-mute hover:text-bone flex items-center gap-1"
+                title="Качи или снимай с камера"
+              >
+                <ImageIcon className="w-3.5 h-3.5" />
+                <span>Качи снимка</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => {
