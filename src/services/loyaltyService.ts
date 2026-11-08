@@ -1,4 +1,4 @@
-import { db } from '../lib/firebase';
+import { db, isFirebaseConfigured } from '../lib/firebase';
 import {
   collection,
   doc,
@@ -32,7 +32,7 @@ const SEED_CUSTOMERS: Customer[] = [
     TotalVisits: 9,
     HasRewardAvailable: false,
     AuthToken: 'token-alex-12345',
-    LastVisitAt: new Date(Date.now() - 26 * 3600 * 1000).toISOString(), // 26 hours ago
+    LastVisitAt: new Date(Date.now() - 26 * 3600 * 1000).toISOString(),
     CreatedAt: new Date(Date.now() - 30 * 86400 * 1000).toISOString(),
   },
   {
@@ -43,7 +43,7 @@ const SEED_CUSTOMERS: Customer[] = [
     TotalVisits: 15,
     HasRewardAvailable: true,
     AuthToken: 'token-georgi-67890',
-    LastVisitAt: new Date(Date.now() - 3 * 3600 * 1000).toISOString(), // 3 hours ago
+    LastVisitAt: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
     CreatedAt: new Date(Date.now() - 60 * 86400 * 1000).toISOString(),
   },
   {
@@ -162,17 +162,19 @@ const localSync = new LocalSyncEngine();
 export class LoyaltyService {
   // 1. SETTINGS
   static async getSettings(): Promise<ShopSettings> {
-    try {
-      const ref = doc(db, 'ShopSettings', 'default');
-      const snap = await getDoc(ref);
-      if (snap.exists()) {
-        return snap.data() as ShopSettings;
-      } else {
-        await setDoc(ref, DEFAULT_SETTINGS);
-        return DEFAULT_SETTINGS;
+    if (isFirebaseConfigured()) {
+      try {
+        const ref = doc(db, 'ShopSettings', 'default');
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+          return snap.data() as ShopSettings;
+        } else {
+          await setDoc(ref, DEFAULT_SETTINGS);
+          return DEFAULT_SETTINGS;
+        }
+      } catch (err) {
+        console.warn('Firestore getSettings failed, using local fallback:', err);
       }
-    } catch (err) {
-      console.warn('Firestore getSettings failed, using local fallback:', err);
     }
     return localSync.getSettings();
   }
@@ -185,12 +187,14 @@ export class LoyaltyService {
       UpdatedAt: new Date().toISOString(),
     };
 
-    try {
-      const ref = doc(db, 'ShopSettings', 'default');
-      await setDoc(ref, updated, { merge: true });
-      return updated;
-    } catch (err) {
-      console.warn('Firestore updateSettings failed, using local fallback:', err);
+    if (isFirebaseConfigured()) {
+      try {
+        const ref = doc(db, 'ShopSettings', 'default');
+        await setDoc(ref, updated, { merge: true });
+        return updated;
+      } catch (err) {
+        console.warn('Firestore updateSettings failed, using local fallback:', err);
+      }
     }
 
     localSync.saveSettings(updated);
@@ -202,14 +206,16 @@ export class LoyaltyService {
     if (!token) return null;
     const cleanToken = token.trim();
 
-    try {
-      const q = query(collection(db, 'Customers'), where('AuthToken', '==', cleanToken), limit(1));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        return snap.docs[0].data() as Customer;
+    if (isFirebaseConfigured()) {
+      try {
+        const q = query(collection(db, 'Customers'), where('AuthToken', '==', cleanToken), limit(1));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          return snap.docs[0].data() as Customer;
+        }
+      } catch (err) {
+        console.warn('Firestore getCustomerByAuthToken failed:', err);
       }
-    } catch (err) {
-      console.warn('Firestore getCustomerByAuthToken failed:', err);
     }
 
     const customers = localSync.getCustomers();
@@ -220,14 +226,16 @@ export class LoyaltyService {
     if (!phone) return null;
     const cleanPhone = phone.replace(/[\s\-()]/g, '');
 
-    try {
-      const q = query(collection(db, 'Customers'), where('Phone', '==', cleanPhone), limit(1));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        return snap.docs[0].data() as Customer;
+    if (isFirebaseConfigured()) {
+      try {
+        const q = query(collection(db, 'Customers'), where('Phone', '==', cleanPhone), limit(1));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          return snap.docs[0].data() as Customer;
+        }
+      } catch (err) {
+        console.warn('Firestore getCustomerByPhone failed:', err);
       }
-    } catch (err) {
-      console.warn('Firestore getCustomerByPhone failed:', err);
     }
 
     const customers = localSync.getCustomers();
@@ -299,12 +307,14 @@ export class LoyaltyService {
       CreatedAt: new Date().toISOString(),
     };
 
-    try {
-      const ref = doc(db, 'Customers', newCustomer.Id);
-      await setDoc(ref, newCustomer);
-      return newCustomer;
-    } catch (err) {
-      console.warn('Firestore registerCustomer failed, falling back to local:', err);
+    if (isFirebaseConfigured()) {
+      try {
+        const ref = doc(db, 'Customers', newCustomer.Id);
+        await setDoc(ref, newCustomer);
+        return newCustomer;
+      } catch (err) {
+        console.warn('Firestore registerCustomer failed, falling back to local:', err);
+      }
     }
 
     // Local fallback
@@ -315,21 +325,23 @@ export class LoyaltyService {
   }
 
   static async getAllCustomers(): Promise<Customer[]> {
-    try {
-      const ref = collection(db, 'Customers');
-      const snap = await getDocs(ref);
-      if (!snap.empty) {
-        const list: Customer[] = [];
-        snap.forEach((d) => list.push(d.data() as Customer));
-        return list.sort((a, b) => {
-          if (!a.LastVisitAt && !b.LastVisitAt) return 0;
-          if (!a.LastVisitAt) return 1;
-          if (!b.LastVisitAt) return -1;
-          return new Date(b.LastVisitAt).getTime() - new Date(a.LastVisitAt).getTime();
-        });
+    if (isFirebaseConfigured()) {
+      try {
+        const ref = collection(db, 'Customers');
+        const snap = await getDocs(ref);
+        if (!snap.empty) {
+          const list: Customer[] = [];
+          snap.forEach((d) => list.push(d.data() as Customer));
+          return list.sort((a, b) => {
+            if (!a.LastVisitAt && !b.LastVisitAt) return 0;
+            if (!a.LastVisitAt) return 1;
+            if (!b.LastVisitAt) return -1;
+            return new Date(b.LastVisitAt).getTime() - new Date(a.LastVisitAt).getTime();
+          });
+        }
+      } catch (err) {
+        console.warn('Firestore getAllCustomers failed:', err);
       }
-    } catch (err) {
-      console.warn('Firestore getAllCustomers failed:', err);
     }
 
     const customers = localSync.getCustomers();
@@ -393,20 +405,22 @@ export class LoyaltyService {
       CreatedAt: nowIso,
     };
 
-    try {
-      await setDoc(doc(db, 'Customers', customer.Id), updatedCustomer, { merge: true });
-      await addDoc(collection(db, 'VisitLogs'), log);
+    if (isFirebaseConfigured()) {
+      try {
+        await setDoc(doc(db, 'Customers', customer.Id), updatedCustomer, { merge: true });
+        await addDoc(collection(db, 'VisitLogs'), log);
 
-      return {
-        success: true,
-        message: rewardUnlocked
-          ? `Поздравления! Клиентът отключи награда: ${settings.DiscountText}!`
-          : `Успешно добавен печат (${updatedCustomer.CurrentStamps}/${settings.RequiredStamps})!`,
-        customer: updatedCustomer,
-        rewardUnlocked,
-      };
-    } catch (err) {
-      console.warn('Firestore addStamp failed, updating local:', err);
+        return {
+          success: true,
+          message: rewardUnlocked
+            ? `Поздравления! Клиентът отключи награда: ${settings.DiscountText}!`
+            : `Успешно добавен печат (${updatedCustomer.CurrentStamps}/${settings.RequiredStamps})!`,
+          customer: updatedCustomer,
+          rewardUnlocked,
+        };
+      } catch (err) {
+        console.warn('Firestore addStamp failed, updating local:', err);
+      }
     }
 
     // Local fallback
@@ -458,17 +472,19 @@ export class LoyaltyService {
       CreatedAt: nowIso,
     };
 
-    try {
-      await setDoc(doc(db, 'Customers', customer.Id), updatedCustomer, { merge: true });
-      await addDoc(collection(db, 'VisitLogs'), log);
+    if (isFirebaseConfigured()) {
+      try {
+        await setDoc(doc(db, 'Customers', customer.Id), updatedCustomer, { merge: true });
+        await addDoc(collection(db, 'VisitLogs'), log);
 
-      return {
-        success: true,
-        message: `Наградата (${settings.DiscountText}) е приложена успешно! Картата е нулирана.`,
-        customer: updatedCustomer,
-      };
-    } catch (err) {
-      console.warn('Firestore redeemReward failed, updating local:', err);
+        return {
+          success: true,
+          message: `Наградата (${settings.DiscountText}) е приложена успешно! Картата е нулирана.`,
+          customer: updatedCustomer,
+        };
+      } catch (err) {
+        console.warn('Firestore redeemReward failed, updating local:', err);
+      }
     }
 
     const customers = localSync.getCustomers();
@@ -488,19 +504,21 @@ export class LoyaltyService {
 
   // 5. VISIT LOGS
   static async getVisitLogs(customerId?: string): Promise<VisitLog[]> {
-    try {
-      let q = query(collection(db, 'VisitLogs'), limit(50));
-      if (customerId) {
-        q = query(collection(db, 'VisitLogs'), where('CustomerId', '==', customerId), limit(50));
+    if (isFirebaseConfigured()) {
+      try {
+        let q = query(collection(db, 'VisitLogs'), limit(50));
+        if (customerId) {
+          q = query(collection(db, 'VisitLogs'), where('CustomerId', '==', customerId), limit(50));
+        }
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const logs: VisitLog[] = [];
+          snap.forEach((d) => logs.push(d.data() as VisitLog));
+          return logs.sort((a, b) => new Date(b.CreatedAt).getTime() - new Date(a.CreatedAt).getTime());
+        }
+      } catch (err) {
+        console.warn('Firestore getVisitLogs failed:', err);
       }
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const logs: VisitLog[] = [];
-        snap.forEach((d) => logs.push(d.data() as VisitLog));
-        return logs.sort((a, b) => new Date(b.CreatedAt).getTime() - new Date(a.CreatedAt).getTime());
-      }
-    } catch (err) {
-      console.warn('Firestore getVisitLogs failed:', err);
     }
 
     const logs = localSync.getLogs();
@@ -516,14 +534,16 @@ export class LoyaltyService {
     onCustomerChange: (customer: Customer) => void
   ): () => void {
     let unsubFirestore: (() => void) | null = null;
-    try {
-      unsubFirestore = onSnapshot(doc(db, 'Customers', customerId), (snap) => {
-        if (snap.exists()) {
-          onCustomerChange(snap.data() as Customer);
-        }
-      });
-    } catch (err) {
-      console.warn('Firestore customer subscribe failed:', err);
+    if (isFirebaseConfigured()) {
+      try {
+        unsubFirestore = onSnapshot(doc(db, 'Customers', customerId), (snap) => {
+          if (snap.exists()) {
+            onCustomerChange(snap.data() as Customer);
+          }
+        });
+      } catch (err) {
+        console.warn('Firestore customer subscribe failed:', err);
+      }
     }
 
     const unsubLocal = localSync.subscribe('CUSTOMERS_UPDATED', (data) => {
@@ -540,14 +560,16 @@ export class LoyaltyService {
 
   static subscribeToSettings(onSettingsChange: (settings: ShopSettings) => void): () => void {
     let unsubFirestore: (() => void) | null = null;
-    try {
-      unsubFirestore = onSnapshot(doc(db, 'ShopSettings', 'default'), (snap) => {
-        if (snap.exists()) {
-          onSettingsChange(snap.data() as ShopSettings);
-        }
-      });
-    } catch (err) {
-      console.warn('Firestore settings subscribe failed:', err);
+    if (isFirebaseConfigured()) {
+      try {
+        unsubFirestore = onSnapshot(doc(db, 'ShopSettings', 'default'), (snap) => {
+          if (snap.exists()) {
+            onSettingsChange(snap.data() as ShopSettings);
+          }
+        });
+      } catch (err) {
+        console.warn('Firestore settings subscribe failed:', err);
+      }
     }
 
     const unsubLocal = localSync.subscribe('SETTINGS_UPDATED', (data) => {
@@ -562,14 +584,16 @@ export class LoyaltyService {
 
   static subscribeToCustomersList(onListChange: (customers: Customer[]) => void): () => void {
     let unsubFirestore: (() => void) | null = null;
-    try {
-      unsubFirestore = onSnapshot(collection(db, 'Customers'), (snap) => {
-        const list: Customer[] = [];
-        snap.forEach((d) => list.push(d.data() as Customer));
-        onListChange(list);
-      });
-    } catch (err) {
-      console.warn('Firestore customers list subscribe failed:', err);
+    if (isFirebaseConfigured()) {
+      try {
+        unsubFirestore = onSnapshot(collection(db, 'Customers'), (snap) => {
+          const list: Customer[] = [];
+          snap.forEach((d) => list.push(d.data() as Customer));
+          onListChange(list);
+        });
+      } catch (err) {
+        console.warn('Firestore customers list subscribe failed:', err);
+      }
     }
 
     const unsubLocal = localSync.subscribe('CUSTOMERS_UPDATED', (data) => {

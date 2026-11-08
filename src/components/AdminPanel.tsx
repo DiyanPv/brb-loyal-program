@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Customer, ShopSettings, VisitLog, StampResult } from '../types';
 import { LoyaltyService } from '../services/loyaltyService';
+import { isFirebaseConfigured } from '../lib/firebase';
 import { QrScannerModal } from './QrScannerModal';
 import { sounds } from '../utils/audio';
 import { isAdminAuthenticated, setAdminAuthenticated } from '../utils/session';
@@ -351,7 +352,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToClient }) => {
           {/* Database status badge */}
           <div className="chip !text-[10px] font-mono">
             <Database className="w-3 h-3 text-acid" />
-            <span>Firebase Firestore (На живо)</span>
+            <span>{isFirebaseConfigured() ? 'Firebase Firestore (На живо)' : 'Локален Режим (Демо)'}</span>
           </div>
 
           <button

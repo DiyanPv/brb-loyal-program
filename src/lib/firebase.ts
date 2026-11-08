@@ -2,12 +2,20 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 
 export const firebaseConfig = {
-  apiKey: "AIzaSyCgp5VRBJgqVVv-wU6EBBAGmEHzqCXltd4",
-  authDomain: "loyalty-program-d3f96.firebaseapp.com",
-  projectId: "loyalty-program-d3f96",
-  storageBucket: "loyalty-program-d3f96.firebasestorage.app",
-  messagingSenderId: "170441487708",
-  appId: "1:170441487708:web:9f9637be0e18c49ad37d99"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || '',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || '',
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || '',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
+};
+
+export const isFirebaseConfigured = (): boolean => {
+  return Boolean(
+    firebaseConfig.apiKey &&
+    firebaseConfig.projectId &&
+    !firebaseConfig.apiKey.includes('your-api-key')
+  );
 };
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
