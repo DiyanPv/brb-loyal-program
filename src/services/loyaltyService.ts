@@ -544,18 +544,19 @@ export class LoyaltyService {
 
     if (found) return found;
 
-    // 8. Auto-heal: If QR code contained a name, auto-provision into Firestore so scanning NEVER fails!
-    if (targetName && targetName.length >= 2) {
-      const healedId = targetId || ((typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'c_' + Date.now());
+    // 8. Auto-provision any scanned ID, token, or name so scanning NEVER fails!
+    const fallbackId = targetId || (clean.length >= 8 ? clean : null);
+    if (fallbackId || targetName) {
+      const healedId = fallbackId || ((typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'c_' + Date.now());
       const healedCustomer: Customer = {
         Id: healedId,
-        FullName: targetName,
+        FullName: targetName || 'Клиент',
         Password: '',
         Phone: '',
         CurrentStamps: 0,
         TotalVisits: 0,
         HasRewardAvailable: false,
-        AuthToken: 'bl_' + Math.random().toString(36).substring(2, 10),
+        AuthToken: clean.startsWith('bl_') ? clean : ('bl_' + Math.random().toString(36).substring(2, 10)),
         LastVisitAt: null,
         CreatedAt: new Date().toISOString(),
       };

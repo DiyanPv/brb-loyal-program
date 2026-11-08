@@ -385,9 +385,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToClient }) => {
         </div>
       </div>
 
-      {/* ACTION FEEDBACK FLOATING TOAST (VISIBLE FROM ANYWHERE) */}
+      {/* ACTION FEEDBACK FLOATING TOAST (SAFE AREA CENTERED) */}
       {actionFeedback && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[9999] w-full max-w-md px-4 pointer-events-auto animate-fade-in">
+        <div
+          className="fixed left-4 right-4 z-[99999] max-w-md mx-auto pointer-events-auto animate-fade-in"
+          style={{ top: 'calc(env(safe-area-inset-top, 20px) + 16px)' }}
+        >
           <div
             className={`p-4 rounded-2xl border shadow-2xl flex items-center justify-between gap-3 font-mono text-xs backdrop-blur-xl ${
               actionFeedback.type === 'success'

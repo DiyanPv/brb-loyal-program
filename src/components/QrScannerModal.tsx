@@ -22,6 +22,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
   const [isScanSuccess, setIsScanSuccess] = useState(false);
   const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null);
+  const [scannedCustomerName, setScannedCustomerName] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -81,6 +82,20 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
       if (hasScannedRef.current) return;
       hasScannedRef.current = true;
 
+      let detectedName: string | null = null;
+      try {
+        const jsonStart = codeText.indexOf('{');
+        const jsonEnd = codeText.lastIndexOf('}');
+        if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+          const parsed = JSON.parse(codeText.slice(jsonStart, jsonEnd + 1));
+          if (parsed.name) detectedName = parsed.name;
+        }
+      } catch {}
+
+      if (detectedName) {
+        setScannedCustomerName(detectedName);
+      }
+
       setIsScanSuccess(true);
       sounds.playStampSound();
       if (typeof window !== 'undefined' && 'vibrate' in navigator) {
@@ -96,6 +111,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
         onScanSuccess(codeText);
         onClose();
         setIsScanSuccess(false);
+        setScannedCustomerName(null);
       }, 950);
     },
     [onScanSuccess, onClose, stopCamera]
@@ -447,10 +463,15 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
               {/* Instant Scan Success Confirmation Overlay */}
               {isScanSuccess && (
                 <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-acid/95 text-ink rounded-xl font-mono animate-fade-in select-none px-4 text-center">
-                  <div className="w-16 h-16 rounded-full bg-ink text-acid flex items-center justify-center mb-3 shadow-2xl animate-bounce border-2 border-ink">
+                  <div className="w-16 h-16 rounded-full bg-ink text-acid flex items-center justify-center mb-2 shadow-2xl animate-bounce border-2 border-ink">
                     <span className="text-3xl font-black">✓</span>
                   </div>
                   <p className="text-lg font-black tracking-wider uppercase">УСПЕШНО СКАНИРАНО!</p>
+                  {scannedCustomerName && (
+                    <p className="text-sm font-black text-ink mt-0.5 tracking-tight">
+                      {scannedCustomerName}
+                    </p>
+                  )}
                   <p className="text-xs font-bold text-ink/80 mt-1 uppercase tracking-wide">
                     ДОБАВЯ СЕ ПЕЧАТ...
                   </p>
