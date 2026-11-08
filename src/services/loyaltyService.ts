@@ -215,7 +215,13 @@ export class LoyaltyService {
       }
     }
     const customers = localSync.getCustomers();
-    return customers.find((c) => c.Id === id) || null;
+    const local = customers.find((c) => c.Id === id) || null;
+    if (local && isFirebaseConfigured()) {
+      try {
+        await setDoc(doc(db, 'Customers', local.Id), local, { merge: true });
+      } catch {}
+    }
+    return local;
   }
 
   static async getCustomerByAuthToken(token: string): Promise<Customer | null> {
@@ -235,12 +241,19 @@ export class LoyaltyService {
     }
 
     const customers = localSync.getCustomers();
-    return customers.find((c) => c.AuthToken === cleanToken) || null;
+    const local = customers.find((c) => c.AuthToken === cleanToken) || null;
+    if (local && isFirebaseConfigured()) {
+      try {
+        await setDoc(doc(db, 'Customers', local.Id), local, { merge: true });
+      } catch {}
+    }
+    return local;
   }
 
   static async getCustomerByPhone(phone: string): Promise<Customer | null> {
     if (!phone) return null;
     const cleanPhone = phone.replace(/[\s\-()]/g, '');
+    if (!cleanPhone) return null;
 
     if (isFirebaseConfigured()) {
       try {
@@ -255,7 +268,54 @@ export class LoyaltyService {
     }
 
     const customers = localSync.getCustomers();
-    return customers.find((c) => c.Phone.replace(/[\s\-()]/g, '') === cleanPhone) || null;
+    return customers.find((c) => c.Phone && c.Phone.replace(/[\s\-()]/g, '') === cleanPhone) || null;
+  }
+
+  static transliterate(text: string): string {
+    const bgToLat: Record<string, string> = {
+      а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y',
+      к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u',
+      ф: 'f', х: 'h', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sht', ъ: 'a', ь: 'y', ю: 'yu', я: 'ya'
+    };
+    return text
+      .toLowerCase()
+      .split('')
+      .map((char) => bgToLat[char] || char)
+      .join('');
+  }
+
+  static async getCustomerByName(name: string): Promise<Customer | null> {
+    if (!name) return null;
+    const clean = name.trim().toLowerCase();
+    const cleanTranslit = this.transliterate(clean);
+
+    const all = await this.getAllCustomers();
+
+    // 1. Exact match
+    const exact = all.find((c) => c.FullName.trim().toLowerCase() === clean);
+    if (exact) return exact;
+
+    // 2. Exact Transliterated match (e.g. "Марин" matches "Marin" or vice versa)
+    const transMatch = all.find((c) => {
+      const cTrans = this.transliterate(c.FullName.trim());
+      return cTrans === cleanTranslit;
+    });
+    if (transMatch) return transMatch;
+
+    // 3. Partial / Substring match (e.g. "Marin" matches "Marin iliev")
+    const partial = all.find((c) => {
+      const cLower = c.FullName.trim().toLowerCase();
+      const cTrans = this.transliterate(cLower);
+      return (
+        cLower.includes(clean) ||
+        clean.includes(cLower) ||
+        cTrans.includes(cleanTranslit) ||
+        cleanTranslit.includes(cTrans)
+      );
+    });
+    if (partial) return partial;
+
+    return null;
   }
 
   static async getCustomerByEmailOrUsername(identifier: string): Promise<Customer | null> {
@@ -288,114 +348,201 @@ export class LoyaltyService {
     ) || null;
   }
 
-  static async loginCustomer(
-    identifier: string,
+  static async loginCustomerByName(
+    fullName: string,
     password?: string
   ): Promise<{ success: boolean; customer?: Customer; message?: string }> {
-    if (!identifier) {
-      return { success: false, message: 'Моля, въведете имейл, потребителско име или телефон.' };
+    const cleanName = fullName.trim();
+    if (!cleanName || cleanName.length < 2) {
+      return { success: false, message: 'Моля, въведете вашето име.' };
     }
 
-    const clean = identifier.trim();
+    const cleanPass = password ? password.trim() : '';
 
-    // 1. Try by phone
-    let found = await this.getCustomerByPhone(clean);
-
-    // 2. Try by email or username
+    const found = await this.getCustomerByName(cleanName);
     if (!found) {
-      found = await this.getCustomerByEmailOrUsername(clean);
+      return {
+        success: false,
+        message: 'Не е намерена карта за това име. Изберете таб "Нова Карта", за да я създадете.',
+      };
     }
 
-    // 3. Try by exact AuthToken or Id
-    if (!found) {
-      found = (await this.getCustomerByAuthToken(clean)) || (await this.getCustomerById(clean));
-    }
-
-    if (!found) {
-      return { success: false, message: 'Не е намерен клиент с тези данни. Моля, регистрирайте се.' };
-    }
-
-    // If customer has a password and password was provided, verify
-    if (found.Password && password) {
-      if (found.Password !== password.trim()) {
-        return { success: false, message: 'Грешна парола! Моля, опитайте отново.' };
+    // Verify password if one exists
+    if (found.Password && cleanPass) {
+      if (found.Password !== cleanPass) {
+        return { success: false, message: 'Грешна парола за това име! Моля, опитайте отново.' };
+      }
+    } else if (!found.Password && cleanPass) {
+      // Set password on legacy record without password
+      found.Password = cleanPass;
+      if (isFirebaseConfigured()) {
+        try {
+          await setDoc(doc(db, 'Customers', found.Id), { Password: cleanPass }, { merge: true });
+        } catch {}
       }
     }
 
     return { success: true, customer: found };
   }
 
-  static async getCustomerByIdentifier(identifier: string): Promise<Customer | null> {
-    if (!identifier) return null;
-    let clean = identifier.trim();
+  static async registerCustomerByName(
+    fullName: string,
+    password?: string
+  ): Promise<{ success: boolean; customer?: Customer; message?: string }> {
+    const cleanName = fullName.trim();
+    if (!cleanName || cleanName.length < 2) {
+      return { success: false, message: 'Моля, въведете име (поне 2 букви).' };
+    }
+
+    const cleanPass = password ? password.trim() : '';
+
+    // Check if customer already exists by this name
+    const existing = await this.getCustomerByName(cleanName);
+    if (existing) {
+      if (existing.Password && cleanPass) {
+        if (existing.Password === cleanPass) {
+          return { success: true, customer: existing };
+        } else {
+          return {
+            success: false,
+            message: 'Вече съществува карта с това име. Въведете правилната парола за вход.',
+          };
+        }
+      } else {
+        if (cleanPass) {
+          existing.Password = cleanPass;
+          if (isFirebaseConfigured()) {
+            try {
+              await setDoc(doc(db, 'Customers', existing.Id), { Password: cleanPass }, { merge: true });
+            } catch {}
+          }
+        }
+        return { success: true, customer: existing };
+      }
+    }
+
+    // Generate unique ID in database
+    const uniqueId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'c_' + Date.now();
+    const authToken = 'bl_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
+
+    const newCustomer: Customer = {
+      Id: uniqueId,
+      FullName: cleanName,
+      Password: cleanPass || undefined,
+      Phone: '',
+      CurrentStamps: 0,
+      TotalVisits: 0,
+      HasRewardAvailable: false,
+      AuthToken: authToken,
+      LastVisitAt: null,
+      CreatedAt: new Date().toISOString(),
+    };
+
+    if (isFirebaseConfigured()) {
+      try {
+        await setDoc(doc(db, 'Customers', newCustomer.Id), newCustomer);
+      } catch (err) {
+        console.warn('Firestore registerCustomerByName failed:', err);
+      }
+    }
+
+    const localList = localSync.getCustomers();
+    localList.unshift(newCustomer);
+    localSync.saveCustomers(localList);
+
+    return { success: true, customer: newCustomer };
+  }
+
+  static async getCustomerByIdentifier(rawInput: string): Promise<Customer | null> {
+    if (!rawInput) return null;
+    let clean = rawInput.trim();
+
+    let targetId = '';
+    let targetName = '';
+
+    // 1. Check if rawInput is JSON (from enhanced QR code)
+    if (clean.startsWith('{') && clean.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(clean);
+        if (parsed.id) targetId = parsed.id;
+        if (parsed.name) targetName = parsed.name;
+        if (parsed.token && !clean.includes('token=')) clean = parsed.token;
+      } catch {}
+    }
+
+    // 2. Custom Scheme or URL format
     if (clean.startsWith('barber-loyalty://stamp/')) {
       clean = clean.replace('barber-loyalty://stamp/', '').trim();
     }
-
-    let qrName = '';
-    let qrPhone = '';
-    let qrStamps = 0;
-    let qrId = '';
 
     if (clean.includes('?')) {
       const [tokenPart, queryString] = clean.split('?');
       clean = tokenPart.trim();
       try {
         const params = new URLSearchParams(queryString);
-        qrName = params.get('n') || params.get('name') || '';
-        qrPhone = params.get('p') || params.get('phone') || '';
-        qrStamps = parseInt(params.get('s') || params.get('stamps') || '0', 10);
-        qrId = params.get('id') || '';
+        targetName = params.get('n') || params.get('name') || targetName;
+        targetId = params.get('id') || targetId;
       } catch {}
     }
 
-    if (clean.includes('token=')) {
-      const match = clean.match(/token=([a-zA-Z0-9_-]+)/);
-      if (match && match[1]) clean = match[1];
+    // 3. Direct document ID match in Firestore
+    const directId = targetId || clean;
+    if (directId) {
+      const byId = await this.getCustomerById(directId);
+      if (byId) return byId;
     }
 
-    // 0. Direct document Id match
-    const byId = await this.getCustomerById(qrId || clean);
-    if (byId) return byId;
-
-    // 1. Try exact AuthToken match
+    // 4. Try exact AuthToken match
     const byToken = await this.getCustomerByAuthToken(clean);
     if (byToken) return byToken;
 
-    // 2. Try normalized Phone match
-    const searchPhone = qrPhone || clean;
-    const byPhone = await this.getCustomerByPhone(searchPhone);
-    if (byPhone) return byPhone;
+    // 5. Try by Name (Exact or Transliterated or Partial)
+    const nameSearch = targetName || clean.replace(/^#/, '');
+    if (nameSearch && nameSearch.length >= 2) {
+      const byName = await this.getCustomerByName(nameSearch);
+      if (byName) return byName;
+    }
 
-    // 3. Try matching by short code
+    // 6. Try by Phone match (if digits)
+    if (/^[\d\s\-()+]{6,}$/.test(clean)) {
+      const byPhone = await this.getCustomerByPhone(clean);
+      if (byPhone) return byPhone;
+    }
+
+    // 7. Comprehensive match across all customers (AuthToken suffix, clean lower, etc.)
     const all = await this.getAllCustomers();
-    const cleanLower = clean.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const cleanLower = clean.toLowerCase().replace(/[^a-z0-9а-я]/g, '');
 
     const found = all.find((c) => {
       const tokenLower = c.AuthToken.toLowerCase();
-      const phoneDigits = c.Phone.replace(/[^0-9]/g, '');
+      const phoneDigits = (c.Phone || '').replace(/[^0-9]/g, '');
       const shortToken = tokenLower.slice(-6);
+      const nameLower = c.FullName.toLowerCase();
 
       return (
         c.Id === clean ||
         tokenLower === cleanLower ||
         tokenLower.endsWith(cleanLower) ||
+        tokenLower.includes(cleanLower) ||
         shortToken === cleanLower ||
-        phoneDigits === cleanLower ||
-        phoneDigits.endsWith(cleanLower)
+        (phoneDigits && phoneDigits === cleanLower) ||
+        (phoneDigits && phoneDigits.endsWith(cleanLower)) ||
+        nameLower.includes(cleanLower)
       );
     });
 
     if (found) return found;
 
-    // 4. AUTO-ADD ONLY if explicit name and phone are provided
-    if (qrName && qrPhone) {
-      const newCustomer: Customer = {
-        Id: qrId || ((typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'c_' + Date.now()),
-        FullName: qrName,
-        Phone: qrPhone,
-        CurrentStamps: qrStamps > 0 ? qrStamps : 0,
-        TotalVisits: qrStamps > 0 ? qrStamps : 0,
+    // 8. Auto-heal: If QR code contained a name, auto-provision into Firestore so scanning NEVER fails!
+    if (targetName && targetName.length >= 2) {
+      const healedId = targetId || ((typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'c_' + Date.now());
+      const healedCustomer: Customer = {
+        Id: healedId,
+        FullName: targetName,
+        Password: '',
+        Phone: '',
+        CurrentStamps: 0,
+        TotalVisits: 0,
         HasRewardAvailable: false,
         AuthToken: 'bl_' + Math.random().toString(36).substring(2, 10),
         LastVisitAt: null,
@@ -404,17 +551,17 @@ export class LoyaltyService {
 
       if (isFirebaseConfigured()) {
         try {
-          await setDoc(doc(db, 'Customers', newCustomer.Id), newCustomer);
+          await setDoc(doc(db, 'Customers', healedCustomer.Id), healedCustomer);
         } catch (err) {
-          console.warn('Auto-add customer in Firestore failed:', err);
+          console.warn('Auto-heal customer in Firestore failed:', err);
         }
       }
 
       const localList = localSync.getCustomers();
-      localList.unshift(newCustomer);
+      localList.unshift(healedCustomer);
       localSync.saveCustomers(localList);
 
-      return newCustomer;
+      return healedCustomer;
     }
 
     return null;

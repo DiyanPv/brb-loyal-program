@@ -263,9 +263,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToClient }) => {
   const filteredCustomers = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     if (!q) return customers;
+    const qTranslit = LoyaltyService.transliterate(q);
     return customers.filter(
       (c) =>
         c.FullName.toLowerCase().includes(q) ||
+        LoyaltyService.transliterate(c.FullName).includes(qTranslit) ||
         c.Phone.includes(q) ||
         (c.Email && c.Email.toLowerCase().includes(q)) ||
         (c.Username && c.Username.toLowerCase().includes(q)) ||
@@ -529,7 +531,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToClient }) => {
                       type="text"
                       value={inlineCodeInput}
                       onChange={(e) => setInlineCodeInput(e.target.value)}
-                      placeholder="Въведи код (#A1B2C3) или телефон..."
+                      placeholder="Въведи име (напр. Марин), код (#BO9Z5Z) или тел..."
                       className="field rounded-xl font-mono text-xs text-acid placeholder:text-mute placeholder:font-sans !py-2.5"
                     />
                   </div>

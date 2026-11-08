@@ -508,16 +508,16 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
                 <Keyboard className="w-6 h-6" />
               </div>
               <h3 className="h-display text-base text-bone">
-                ВЪВЕДИ КОД ОТ КАРТАТА
+                ВЪВЕДИ ИМЕ ИЛИ КОД
               </h3>
               <p className="text-xs text-mute mt-1">
-                Въведи номера под QR кода на клиента или неговия телефон:
+                Въведи името на клиента или кода под QR кода:
               </p>
             </div>
 
             <div>
               <label className="label-nv">
-                Номер на Карта / Телефон:
+                Име на Клиента или Код от Карта:
               </label>
               <input
                 type="text"
@@ -525,7 +525,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
                 autoFocus
                 value={manualCodeInput}
                 onChange={(e) => setManualCodeInput(e.target.value)}
-                placeholder="напр. #A1B2C3 или 0888123456"
+                placeholder="напр. Марин Илиев или #BO9Z5Z"
                 className="field rounded-xl text-center text-lg font-bold font-mono tracking-wider text-acid placeholder:text-xs placeholder:tracking-normal placeholder:font-sans"
               />
             </div>
@@ -534,7 +534,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
               type="submit"
               className="btn btn-acid w-full rounded-xl !py-3.5 text-xs font-bold shadow-acid-hard cursor-pointer"
             >
-              <span>ДОБАВИ ПЕЧАТ (С КОД)</span>
+              <span>ДОБАВИ ПЕЧАТ</span>
               <ArrowRight className="w-4 h-4" />
             </button>
 

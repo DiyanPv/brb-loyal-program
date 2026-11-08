@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Customer } from '../types';
 import { LoyaltyService } from '../services/loyaltyService';
 import { setStoredAuthToken } from '../utils/session';
-import { User, Phone, ShieldCheck, ArrowRight, Lock, Mail, LogIn, UserPlus } from 'lucide-react';
+import { User, ShieldCheck, ArrowRight, Lock, LogIn, UserPlus } from 'lucide-react';
 import { sounds } from '../utils/audio';
 
 interface CustomerRegisterProps {
@@ -12,15 +12,9 @@ interface CustomerRegisterProps {
 export const CustomerRegister: React.FC<CustomerRegisterProps> = ({ onCustomerLoaded }) => {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
 
-  // Login form state
-  const [loginIdentifier, setLoginIdentifier] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-
-  // Register form state
+  // Unified 2-field authentication
   const [fullName, setFullName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [emailOrUsername, setEmailOrUsername] = useState('');
-  const [registerPassword, setRegisterPassword] = useState('');
+  const [password, setPassword] = useState('');
 
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -30,9 +24,9 @@ export const CustomerRegister: React.FC<CustomerRegisterProps> = ({ onCustomerLo
     e.preventDefault();
     setErrorMsg(null);
 
-    const cleanIdentifier = loginIdentifier.trim();
-    if (!cleanIdentifier) {
-      setErrorMsg('Моля, въведете имейл, потребителско име или телефон.');
+    const cleanName = fullName.trim();
+    if (!cleanName || cleanName.length < 2) {
+      setErrorMsg('Моля, въведете вашето име.');
       return;
     }
 
@@ -40,7 +34,7 @@ export const CustomerRegister: React.FC<CustomerRegisterProps> = ({ onCustomerLo
     sounds.playClick();
 
     try {
-      const res = await LoyaltyService.loginCustomer(cleanIdentifier, loginPassword.trim() || undefined);
+      const res = await LoyaltyService.loginCustomerByName(cleanName, password.trim() || undefined);
       if (res.success && res.customer) {
         setStoredAuthToken(res.customer.AuthToken);
         sounds.playRewardSound();
@@ -56,22 +50,14 @@ export const CustomerRegister: React.FC<CustomerRegisterProps> = ({ onCustomerLo
     }
   };
 
-  // Handle Register
+  // Handle Register (New Card)
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
     const cleanName = fullName.trim();
-    const cleanPhone = phone.trim().replace(/[\s\-()]/g, '');
-    const cleanEmailOrUser = emailOrUsername.trim();
-
-    if (!cleanName || cleanName.length < 3) {
-      setErrorMsg('Моля, въведете две имена (напр. Александър Петров)');
-      return;
-    }
-
-    if (!cleanPhone || cleanPhone.length < 8) {
-      setErrorMsg('Моля, въведете валиден телефонен номер (напр. 0888 123 456)');
+    if (!cleanName || cleanName.length < 2) {
+      setErrorMsg('Моля, въведете име (поне 2 букви).');
       return;
     }
 
@@ -79,21 +65,14 @@ export const CustomerRegister: React.FC<CustomerRegisterProps> = ({ onCustomerLo
     sounds.playClick();
 
     try {
-      const isEmail = cleanEmailOrUser.includes('@');
-      const email = isEmail ? cleanEmailOrUser : undefined;
-      const username = !isEmail && cleanEmailOrUser ? cleanEmailOrUser : undefined;
-
-      const customer = await LoyaltyService.registerCustomer(
-        cleanName,
-        cleanPhone,
-        email,
-        username,
-        registerPassword.trim() || undefined
-      );
-
-      setStoredAuthToken(customer.AuthToken);
-      sounds.playRewardSound();
-      onCustomerLoaded(customer);
+      const res = await LoyaltyService.registerCustomerByName(cleanName, password.trim() || undefined);
+      if (res.success && res.customer) {
+        setStoredAuthToken(res.customer.AuthToken);
+        sounds.playRewardSound();
+        onCustomerLoaded(res.customer);
+      } else {
+        setErrorMsg(res.message || 'Грешка при създаване на карта.');
+      }
     } catch (err) {
       console.error('Registration error:', err);
       setErrorMsg('Възникна грешка при регистрацията. Моля, опитайте отново.');
@@ -126,7 +105,7 @@ export const CustomerRegister: React.FC<CustomerRegisterProps> = ({ onCustomerLo
         </div>
       </div>
 
-      {/* Registration & Login Card in NV Card Style */}
+      {/* Simplified 2-Field Authentication Card */}
       <div className="card-nv relative border border-line bg-panel p-6 sm:p-8 rounded-2xl shadow-2xl">
         {/* Auth Mode Switcher Tabs */}
         <div className="flex items-center justify-between pb-4 mb-6 border-b border-line">
@@ -175,16 +154,17 @@ export const CustomerRegister: React.FC<CustomerRegisterProps> = ({ onCustomerLo
           <form onSubmit={handleLoginSubmit} className="space-y-4 animate-fade-in font-sans">
             <div>
               <label className="label-nv">
-                Имейл, Потребителско Име или Телефон
+                Твоето Име *
               </label>
               <div className="relative">
                 <input
                   type="text"
                   required
-                  value={loginIdentifier}
-                  onChange={(e) => setLoginIdentifier(e.target.value)}
-                  placeholder="напр. 0897827242 или marin@example.com"
-                  className="field rounded-xl font-mono text-sm"
+                  autoFocus
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="напр. Марин Илиев"
+                  className="field rounded-xl font-sans text-sm"
                 />
                 <User className="w-4 h-4 text-mute absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
@@ -198,8 +178,8 @@ export const CustomerRegister: React.FC<CustomerRegisterProps> = ({ onCustomerLo
               <div className="relative">
                 <input
                   type="password"
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   className="field rounded-xl font-mono text-sm"
                 />
@@ -236,75 +216,38 @@ export const CustomerRegister: React.FC<CustomerRegisterProps> = ({ onCustomerLo
             </div>
           </form>
         ) : (
-          /* 2. REGISTRATION FORM */
+          /* 2. REGISTRATION FORM (NEW CARD) */
           <form onSubmit={handleRegisterSubmit} className="space-y-4 animate-fade-in font-sans">
-            {/* Full Name */}
             <div>
               <label className="label-nv">
-                Две Имена (Клиент) *
+                Твоето Име (Клиент) *
               </label>
               <div className="relative">
                 <input
                   type="text"
                   required
+                  autoFocus
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  placeholder="напр. Александър Петров"
-                  className="field rounded-xl font-sans"
+                  placeholder="напр. Марин Илиев"
+                  className="field rounded-xl font-sans text-sm"
                 />
                 <User className="w-4 h-4 text-mute absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
             </div>
 
-            {/* Phone Number */}
-            <div>
-              <label className="label-nv">
-                Телефонен Номер *
-              </label>
-              <div className="relative">
-                <input
-                  type="tel"
-                  required
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="0888 123 456"
-                  className="field rounded-xl font-mono"
-                />
-                <Phone className="w-4 h-4 text-mute absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              </div>
-            </div>
-
-            {/* Email / Username (Optional) */}
             <div>
               <label className="label-nv flex items-center justify-between">
-                <span>Имейл или Потребителско Име</span>
-                <span className="text-[10px] text-mute font-normal normal-case">(по избор)</span>
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={emailOrUsername}
-                  onChange={(e) => setEmailOrUsername(e.target.value)}
-                  placeholder="напр. alex@gmail.com или alex99"
-                  className="field rounded-xl font-sans"
-                />
-                <Mail className="w-4 h-4 text-mute absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              </div>
-            </div>
-
-            {/* Password (Optional) */}
-            <div>
-              <label className="label-nv flex items-center justify-between">
-                <span>Парола за защита на картата</span>
+                <span>Парола за защита</span>
                 <span className="text-[10px] text-mute font-normal normal-case">(по избор)</span>
               </label>
               <div className="relative">
                 <input
                   type="password"
-                  value={registerPassword}
-                  onChange={(e) => setRegisterPassword(e.target.value)}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="field rounded-xl font-mono"
+                  className="field rounded-xl font-mono text-sm"
                 />
                 <Lock className="w-4 h-4 text-mute absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
@@ -312,7 +255,7 @@ export const CustomerRegister: React.FC<CustomerRegisterProps> = ({ onCustomerLo
 
             <p className="text-[11px] text-mute mt-1 flex items-center gap-1.5 font-mono">
               <ShieldCheck className="w-3.5 h-3.5 text-acid shrink-0" />
-              <span>Ако вече имаш карта с този телефон или имейл, печатите се възстановяват автоматично.</span>
+              <span>Създава уникална дигитална карта в системата за теб.</span>
             </p>
 
             <button
@@ -321,7 +264,7 @@ export const CustomerRegister: React.FC<CustomerRegisterProps> = ({ onCustomerLo
               className="btn btn-acid w-full rounded-xl !py-4 text-sm mt-4 disabled:opacity-60 cursor-pointer shadow-acid-hard"
             >
               {isLoading ? (
-                <span>Регистрация...</span>
+                <span>Създаване...</span>
               ) : (
                 <span className="inline-flex items-center gap-2">
                   <span>Създай дигитална карта</span>
@@ -339,7 +282,7 @@ export const CustomerRegister: React.FC<CustomerRegisterProps> = ({ onCustomerLo
                 }}
                 className="text-xs font-mono text-mute hover:text-acid transition-colors underline"
               >
-                Вече имаш акаунт? Влез тук →
+                Вече имаш карта? Влез тук →
               </button>
             </div>
           </form>

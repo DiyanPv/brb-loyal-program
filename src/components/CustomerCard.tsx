@@ -169,8 +169,23 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
     }
   };
 
-  // High-contrast clean QR token payload using direct document ID for 100% reliable matching
-  const qrPayload = customer.Id;
+  // Self-healing sync: verify this customer exists in Firestore; if not, persist immediately
+  useEffect(() => {
+    if (customer && customer.Id) {
+      LoyaltyService.getCustomerById(customer.Id).then((found) => {
+        if (!found) {
+          LoyaltyService.registerCustomerByName(customer.FullName, customer.Password);
+        }
+      });
+    }
+  }, [customer.Id]);
+
+  // Rich QR payload containing ID, Name and Token for 100% fail-proof identification
+  const qrPayload = JSON.stringify({
+    id: customer.Id,
+    name: customer.FullName,
+    token: customer.AuthToken,
+  });
 
   const copyQrValue = () => {
     sounds.playClick();
@@ -370,19 +385,19 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
             {/* Quick manual typing code for the barber */}
             <div className="p-3 rounded-xl bg-coal border border-line w-full max-w-xs text-center font-mono">
               <span className="text-[10px] text-mute uppercase tracking-widest block font-bold">
-                // НОМЕР ЗА РЪЧНО ВЪВЕЖДАНЕ
+                // РЪЧНО ВЪВЕЖДАНЕ ОТ БАРБЕР
               </span>
               <div className="flex items-center justify-center gap-2 mt-1">
-                <span className="text-base font-black text-acid tracking-wider bg-black/40 px-2 py-0.5 rounded border border-line">
-                  #{customer.AuthToken.replace('bl_', '').slice(-6).toUpperCase()}
+                <span className="text-sm font-black text-acid tracking-wider bg-black/40 px-2 py-0.5 rounded border border-line">
+                  {customer.FullName}
                 </span>
                 <span className="text-[11px] text-mute">или</span>
                 <span className="text-xs font-bold text-bone bg-black/40 px-2 py-0.5 rounded border border-line">
-                  {customer.Phone}
+                  #{customer.AuthToken.replace('bl_', '').slice(-6).toUpperCase()}
                 </span>
               </div>
               <p className="text-[10px] text-mute/80 mt-1.5">
-                Диктувай този номер, ако камерата на барбера не работи
+                Барберът може да въведе твоето име или кода от картата
               </p>
             </div>
 
