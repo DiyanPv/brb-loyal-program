@@ -460,13 +460,16 @@ export class LoyaltyService {
     let targetId = '';
     let targetName = '';
 
-    // 1. Check if rawInput is JSON (from enhanced QR code)
-    if (clean.startsWith('{') && clean.endsWith('}')) {
+    // 1. Check if rawInput contains JSON (from enhanced QR code)
+    const jsonStart = clean.indexOf('{');
+    const jsonEnd = clean.lastIndexOf('}');
+    if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
       try {
-        const parsed = JSON.parse(clean);
+        const jsonStr = clean.slice(jsonStart, jsonEnd + 1);
+        const parsed = JSON.parse(jsonStr);
         if (parsed.id) targetId = parsed.id;
         if (parsed.name) targetName = parsed.name;
-        if (parsed.token && !clean.includes('token=')) clean = parsed.token;
+        if (parsed.token) clean = parsed.token;
       } catch {}
     }
 
@@ -509,25 +512,33 @@ export class LoyaltyService {
       if (byPhone) return byPhone;
     }
 
-    // 7. Comprehensive match across all customers (AuthToken suffix, clean lower, etc.)
+    // 7. Comprehensive match across all customers (AuthToken suffix, clean lower, name with/without spaces, password, etc.)
     const all = await this.getAllCustomers();
-    const cleanLower = clean.toLowerCase().replace(/[^a-z0-9а-я]/g, '');
+    const cleanLowerWithSpaces = clean.toLowerCase().trim().replace(/^#/, '');
+    const cleanLowerNoSpaces = cleanLowerWithSpaces.replace(/[^a-z0-9а-я]/g, '');
 
     const found = all.find((c) => {
       const tokenLower = c.AuthToken.toLowerCase();
       const phoneDigits = (c.Phone || '').replace(/[^0-9]/g, '');
       const shortToken = tokenLower.slice(-6);
-      const nameLower = c.FullName.toLowerCase();
+      const nameLower = c.FullName.toLowerCase().trim();
+      const nameNoSpaces = nameLower.replace(/[^a-z0-9а-я]/g, '');
+      const pass = (c.Password || '').toLowerCase().trim();
 
       return (
         c.Id === clean ||
-        tokenLower === cleanLower ||
-        tokenLower.endsWith(cleanLower) ||
-        tokenLower.includes(cleanLower) ||
-        shortToken === cleanLower ||
-        (phoneDigits && phoneDigits === cleanLower) ||
-        (phoneDigits && phoneDigits.endsWith(cleanLower)) ||
-        nameLower.includes(cleanLower)
+        (pass && pass === cleanLowerWithSpaces) ||
+        nameLower === cleanLowerWithSpaces ||
+        nameLower.includes(cleanLowerWithSpaces) ||
+        cleanLowerWithSpaces.includes(nameLower) ||
+        nameNoSpaces === cleanLowerNoSpaces ||
+        nameNoSpaces.includes(cleanLowerNoSpaces) ||
+        tokenLower === cleanLowerNoSpaces ||
+        tokenLower.endsWith(cleanLowerNoSpaces) ||
+        tokenLower.includes(cleanLowerNoSpaces) ||
+        shortToken === cleanLowerNoSpaces ||
+        (phoneDigits && phoneDigits === cleanLowerNoSpaces) ||
+        (phoneDigits && phoneDigits.endsWith(cleanLowerNoSpaces))
       );
     });
 
