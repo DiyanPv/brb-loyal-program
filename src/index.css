@@ -219,3 +219,56 @@
 .animate-shake {
   animation: shake 0.4s ease-in-out;
 }
+
+
+/* ==========================================================================
+   iOS Safari & Mobile Camera Fixes for QR Scanner
+   ========================================================================== */
+#barber-html5-qr-reader {
+  width: 100% !important;
+  border: none !important;
+  position: relative !important;
+  background: #000000 !important;
+  border-radius: 0.75rem !important;
+  overflow: hidden !important;
+}
+
+#barber-html5-qr-reader video {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 280px !important;
+  max-height: 340px !important;
+  object-fit: cover !important;
+  border-radius: 0.75rem !important;
+  display: block !important;
+  background: #000000 !important;
+  -webkit-transform: translateZ(0) !important;
+  transform: translateZ(0) !important;
+}
+
+#barber-html5-qr-reader__scan_region {
+  min-height: 280px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: transparent !important;
+}
+
+#barber-html5-qr-reader__scan_region img {
+  display: none !important;
+}
+
+#barber-html5-qr-reader__dashboard_section {
+  display: none !important;
+}
+
+#barber-html5-qr-reader__header_message {
+  display: none !important;
+}
+
+/* Modal Non-scrollable Center Lock */
+.modal-lock-body {
+  overflow: hidden !important;
+  touch-action: none !important;
+  -webkit-overflow-scrolling: auto !important;
+}
