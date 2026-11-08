@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+import jsQR from 'jsqr';
 import { X, Camera, Keyboard, ArrowRight, RefreshCw } from 'lucide-react';
 import { sounds } from '../utils/audio';
 
@@ -19,13 +19,14 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
   const [manualCodeInput, setManualCodeInput] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
-  const [availableCameras, setAvailableCameras] = useState<{ id: string; label: string }[]>([]);
-  const [activeCamIndex, setActiveCamIndex] = useState(0);
+  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
+  const [cameraIndex, setCameraIndex] = useState(0);
 
-  const scannerRef = useRef<Html5Qrcode | null>(null);
-  const isStoppingRef = useRef(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const animFrameId = useRef<number | null>(null);
   const hasScannedRef = useRef(false);
-  const readerElementId = 'barber-html5-qr-reader';
 
   // Lock body scroll on iOS/desktop while modal is open
   useEffect(() => {
@@ -45,57 +46,98 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
     };
   }, [isOpen]);
 
-  const stopScannerSilently = useCallback(async () => {
-    if (isStoppingRef.current) return;
-    const currentScanner = scannerRef.current;
-    if (currentScanner) {
-      isStoppingRef.current = true;
-      try {
-        if (currentScanner.isScanning) {
-          await currentScanner.stop().catch(() => {});
-        }
-      } catch (err) {
-        console.warn('Silent scanner stop error:', err);
-      } finally {
-        isStoppingRef.current = false;
-      }
+  // Cleanly stop media tracks and animation loop
+  const stopCamera = useCallback(() => {
+    if (animFrameId.current) {
+      cancelAnimationFrame(animFrameId.current);
+      animFrameId.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {}
+      });
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
   }, []);
 
-  const fullCleanup = useCallback(async () => {
-    await stopScannerSilently();
-    try {
-      if (scannerRef.current) {
-        scannerRef.current.clear();
-      }
-    } catch (err) {
-      console.warn('Scanner clear error:', err);
-    } finally {
-      scannerRef.current = null;
-    }
-  }, [stopScannerSilently]);
+  // Scan loop powered by jsQR
+  const startScanningLoop = useCallback(() => {
+    let lastScanTimestamp = 0;
+    const scanIntervalMs = 75; // Scan ~13 times per second
 
-  // Enumerate cameras once on open
-  useEffect(() => {
-    if (!isOpen) return;
-    Html5Qrcode.getCameras()
-      .then((cams) => {
-        if (cams && cams.length > 0) {
-          setAvailableCameras(cams);
+    const scanFrame = (timestamp: number) => {
+      if (hasScannedRef.current) return;
+
+      if (timestamp - lastScanTimestamp >= scanIntervalMs) {
+        lastScanTimestamp = timestamp;
+
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+
+        if (video && canvas && video.readyState >= video.HAVE_CURRENT_DATA) {
+          const vWidth = video.videoWidth;
+          const vHeight = video.videoHeight;
+
+          if (vWidth > 0 && vHeight > 0) {
+            // Keep aspect ratio but cap max processing dimension to 640px for 5ms decode latency
+            const maxDimension = 640;
+            const scale = Math.min(1, maxDimension / Math.max(vWidth, vHeight));
+            const targetWidth = Math.floor(vWidth * scale);
+            const targetHeight = Math.floor(vHeight * scale);
+
+            canvas.width = targetWidth;
+            canvas.height = targetHeight;
+
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            if (ctx) {
+              ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
+              const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+
+              const qrCode = jsQR(imageData.data, imageData.width, imageData.height, {
+                inversionAttempts: 'attemptBoth',
+              });
+
+              if (qrCode && qrCode.data && qrCode.data.trim()) {
+                hasScannedRef.current = true;
+                const scannedText = qrCode.data.trim();
+
+                sounds.playStampSound();
+                if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+                  try {
+                    navigator.vibrate([80, 40, 100]);
+                  } catch {}
+                }
+
+                stopCamera();
+                onScanSuccess(scannedText);
+                onClose();
+                return;
+              }
+            }
+          }
         }
-      })
-      .catch(() => {});
-  }, [isOpen]);
+      }
 
-  // Camera start / restart effect
+      animFrameId.current = requestAnimationFrame(scanFrame);
+    };
+
+    animFrameId.current = requestAnimationFrame(scanFrame);
+  }, [onScanSuccess, onClose, stopCamera]);
+
+  // Start native camera
   useEffect(() => {
     if (!isOpen) {
-      fullCleanup();
+      stopCamera();
       return;
     }
 
     if (scanMode !== 'camera') {
-      stopScannerSilently();
+      stopCamera();
       return;
     }
 
@@ -104,129 +146,110 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
     setErrorMsg(null);
     hasScannedRef.current = false;
 
-    const initScanner = async () => {
+    const initCamera = async () => {
       try {
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        if (!isMounted) return;
+        stopCamera();
 
-        const container = document.getElementById(readerElementId);
-        if (!container) return;
-
-        if (!scannerRef.current) {
-          scannerRef.current = new Html5Qrcode(readerElementId, {
-            formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-            verbose: false,
-          });
+        // Check if mediaDevices is supported
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('getUserMedia not supported in this browser environment');
         }
 
-        const html5QrCode = scannerRef.current;
-        if (html5QrCode.isScanning) {
-          await stopScannerSilently();
-        }
-
-        // Camera target strategy:
-        // Use environment facingMode by default for native 1x autofocus lens
-        // If user explicitly flips cameras, use the selected deviceId
-        let cameraTarget: any = { facingMode: 'environment' };
-        if (availableCameras.length > 1 && availableCameras[activeCamIndex]) {
-          cameraTarget = availableCameras[activeCamIndex].id;
-        }
-
-        // Optimal scanning configuration:
-        // 12 FPS gives mobile Safari plenty of headroom for ZXing decode
-        // QR box 75% optimizes CPU decode region
-        const config = {
-          fps: 12,
-          qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
-            const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-            const boxSize = Math.max(160, Math.floor(minEdge * 0.72));
-            return { width: boxSize, height: boxSize };
+        let constraints: MediaStreamConstraints = {
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
           },
-          aspectRatio: 1.0,
+          audio: false,
         };
 
-        await html5QrCode.start(
-          cameraTarget,
-          config,
-          (decodedText) => {
-            if (hasScannedRef.current) return;
-            hasScannedRef.current = true;
+        if (availableCameras.length > 1 && availableCameras[cameraIndex]) {
+          constraints = {
+            video: {
+              deviceId: { exact: availableCameras[cameraIndex].deviceId },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+            audio: false,
+          };
+        }
 
-            sounds.playStampSound();
-            if (typeof window !== 'undefined' && 'vibrate' in navigator) {
-              try {
-                navigator.vibrate([80, 40, 100]);
-              } catch {}
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (!isMounted) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.setAttribute('playsinline', 'true');
+          videoRef.current.setAttribute('webkit-playsinline', 'true');
+          videoRef.current.muted = true;
+          await videoRef.current.play();
+
+          if (isMounted) {
+            setIsInitializing(false);
+            startScanningLoop();
+          }
+        }
+
+        // Enumerate video devices if multiple rear cameras are available
+        if (availableCameras.length === 0 && navigator.mediaDevices.enumerateDevices) {
+          try {
+            const allDevices = await navigator.mediaDevices.enumerateDevices();
+            const videoInputs = allDevices.filter((d) => d.kind === 'videoinput');
+            if (videoInputs.length > 0 && isMounted) {
+              setAvailableCameras(videoInputs);
             }
-
-            // Immediately invoke callback and close modal without awaiting camera teardown
-            onScanSuccess(decodedText);
-            onClose();
-
-            // Background teardown
-            stopScannerSilently();
-          },
-          () => {}
-        );
-
-        if (isMounted) {
-          setIsInitializing(false);
-          setTimeout(() => {
-            const video = document.querySelector<HTMLVideoElement>(`#${readerElementId} video`);
-            if (video) {
-              video.setAttribute('playsinline', 'true');
-              video.setAttribute('webkit-playsinline', 'true');
-              video.muted = true;
-              video.autoplay = true;
-              video.play().catch(() => {});
-            }
-          }, 100);
+          } catch {}
         }
       } catch (err: any) {
-        console.warn('Camera start error:', err);
+        console.warn('Native camera start error:', err);
         if (isMounted) {
           setIsInitializing(false);
           setScanMode('manual');
           setErrorMsg(
-            'Камерата не може да се стартира на това устройство. Можете да въведете кода или телефона от картата ръчно.'
+            'Камерата не може да бъде стартирана на това устройство. Можете да въведете кода или телефона от картата ръчно.'
           );
         }
       }
     };
 
-    initScanner();
+    initCamera();
 
     return () => {
       isMounted = false;
-      stopScannerSilently();
+      stopCamera();
     };
-  }, [isOpen, scanMode, activeCamIndex, availableCameras, fullCleanup, stopScannerSilently, onClose, onScanSuccess]);
+  }, [isOpen, scanMode, cameraIndex, availableCameras, startScanningLoop, stopCamera]);
 
-  const handleManualSubmit = async (e: React.FormEvent) => {
+  const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const clean = manualCodeInput.trim();
     if (!clean) return;
 
     sounds.playStampSound();
+    stopCamera();
     onScanSuccess(clean);
     onClose();
-    fullCleanup();
   };
 
-  const handleClose = async () => {
-    fullCleanup();
+  const handleClose = () => {
+    stopCamera();
     onClose();
   };
 
   const toggleCamera = () => {
     if (availableCameras.length <= 1) return;
     sounds.playClick();
-    setActiveCamIndex((prev) => (prev + 1) % availableCameras.length);
+    setCameraIndex((prev) => (prev + 1) % availableCameras.length);
   };
 
   if (!isOpen) return null;
 
-  // Render via createPortal directly into document.body with 100dvh for true iOS Safari vertical centering
   return createPortal(
     <div
       className="fixed inset-0 z-[99999] h-[100dvh] w-screen flex items-center justify-center p-3 sm:p-4 bg-black/90 backdrop-blur-md overscroll-none touch-none select-none animate-fade-in"
@@ -245,6 +268,9 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
         }
       }}
     >
+      {/* Hidden offscreen canvas for pixel extraction */}
+      <canvas ref={canvasRef} className="hidden" />
+
       <div
         className="relative w-full max-w-sm bg-panel border border-line rounded-2xl p-4 sm:p-5 shadow-2xl overflow-hidden my-auto max-h-[92dvh] flex flex-col justify-between"
         onClick={(e) => e.stopPropagation()}
@@ -310,7 +336,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
           </div>
         )}
 
-        {/* 1. CAMERA CONTAINER */}
+        {/* 1. NATIVE CAMERA CONTAINER */}
         <div className={scanMode === 'camera' ? 'block' : 'hidden'}>
           <div className="relative">
             {isInitializing && (
@@ -321,12 +347,18 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
             )}
 
             <div className="relative w-full rounded-xl overflow-hidden border-2 border-acid/50 bg-black min-h-[260px] aspect-square flex items-center justify-center">
-              <div id={readerElementId} className="w-full h-full min-h-[260px]" />
+              <video
+                ref={videoRef}
+                className="w-full h-full object-cover rounded-xl"
+                playsInline
+                autoPlay
+                muted
+              />
 
               {/* Laser Scan Guide Corners & Scanline */}
               {!isInitializing && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                  <div className="w-48 h-48 border border-acid/50 rounded-xl relative overflow-hidden">
+                  <div className="w-52 h-52 border border-acid/50 rounded-xl relative overflow-hidden">
                     {/* Corner Reticles */}
                     <div className="absolute -top-1 -left-1 w-5 h-5 border-t-2 border-l-2 border-acid" />
                     <div className="absolute -top-1 -right-1 w-5 h-5 border-t-2 border-r-2 border-acid" />
