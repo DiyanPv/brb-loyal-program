@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
-import { X, Camera, Keyboard, ArrowRight } from 'lucide-react';
+import { X, Camera, Keyboard, ArrowRight, RefreshCw } from 'lucide-react';
 import { sounds } from '../utils/audio';
 
 interface QrScannerModalProps {
@@ -19,8 +19,12 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
   const [manualCodeInput, setManualCodeInput] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [availableCameras, setAvailableCameras] = useState<{ id: string; label: string }[]>([]);
+  const [activeCamIndex, setActiveCamIndex] = useState(0);
+
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const isStoppingRef = useRef(false);
+  const hasScannedRef = useRef(false);
   const readerElementId = 'barber-html5-qr-reader';
 
   // Lock body scroll on iOS/desktop while modal is open
@@ -28,10 +32,16 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
     if (!isOpen) return;
 
     const originalOverflow = document.body.style.overflow;
+    const originalPosition = document.body.style.position;
+    const originalWidth = document.body.style.width;
+
     document.body.style.overflow = 'hidden';
+    document.body.style.width = '100%';
 
     return () => {
       document.body.style.overflow = originalOverflow;
+      document.body.style.position = originalPosition;
+      document.body.style.width = originalWidth;
     };
   }, [isOpen]);
 
@@ -65,7 +75,19 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
     }
   }, [stopScannerSilently]);
 
-  // Camera start / pause effect
+  // Enumerate cameras once on open
+  useEffect(() => {
+    if (!isOpen) return;
+    Html5Qrcode.getCameras()
+      .then((cams) => {
+        if (cams && cams.length > 0) {
+          setAvailableCameras(cams);
+        }
+      })
+      .catch(() => {});
+  }, [isOpen]);
+
+  // Camera start / restart effect
   useEffect(() => {
     if (!isOpen) {
       fullCleanup();
@@ -80,10 +102,11 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
     let isMounted = true;
     setIsInitializing(true);
     setErrorMsg(null);
+    hasScannedRef.current = false;
 
     const initScanner = async () => {
       try {
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await new Promise((resolve) => setTimeout(resolve, 150));
         if (!isMounted) return;
 
         const container = document.getElementById(readerElementId);
@@ -98,43 +121,50 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
 
         const html5QrCode = scannerRef.current;
         if (html5QrCode.isScanning) {
-          setIsInitializing(false);
-          return;
+          await stopScannerSilently();
         }
 
+        // Camera target strategy:
+        // Use environment facingMode by default for native 1x autofocus lens
+        // If user explicitly flips cameras, use the selected deviceId
         let cameraTarget: any = { facingMode: 'environment' };
-        try {
-          const cameras = await Html5Qrcode.getCameras().catch(() => []);
-          if (cameras && cameras.length > 0) {
-            const backCam = cameras.find((c) =>
-              /back|rear|environment|primary/i.test(c.label)
-            );
-            cameraTarget = backCam ? backCam.id : cameras[cameras.length - 1].id;
-          }
-        } catch {
-          cameraTarget = { facingMode: 'environment' };
+        if (availableCameras.length > 1 && availableCameras[activeCamIndex]) {
+          cameraTarget = availableCameras[activeCamIndex].id;
         }
 
-        // NO qrbox provided: scans the entire video frame, making detection 10x faster and broader!
+        // Optimal scanning configuration:
+        // 12 FPS gives mobile Safari plenty of headroom for ZXing decode
+        // QR box 75% optimizes CPU decode region
         const config = {
-          fps: 20,
-          videoConstraints: {
-            facingMode: { ideal: 'environment' },
+          fps: 12,
+          qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+            const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+            const boxSize = Math.max(160, Math.floor(minEdge * 0.72));
+            return { width: boxSize, height: boxSize };
           },
+          aspectRatio: 1.0,
         };
 
         await html5QrCode.start(
           cameraTarget,
           config,
           (decodedText) => {
+            if (hasScannedRef.current) return;
+            hasScannedRef.current = true;
+
             sounds.playStampSound();
             if (typeof window !== 'undefined' && 'vibrate' in navigator) {
-              try { navigator.vibrate(100); } catch {}
+              try {
+                navigator.vibrate([80, 40, 100]);
+              } catch {}
             }
-            stopScannerSilently().then(() => {
-              onScanSuccess(decodedText);
-              onClose();
-            });
+
+            // Immediately invoke callback and close modal without awaiting camera teardown
+            onScanSuccess(decodedText);
+            onClose();
+
+            // Background teardown
+            stopScannerSilently();
           },
           () => {}
         );
@@ -150,7 +180,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
               video.autoplay = true;
               video.play().catch(() => {});
             }
-          }, 150);
+          }, 100);
         }
       } catch (err: any) {
         console.warn('Camera start error:', err);
@@ -170,7 +200,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
       isMounted = false;
       stopScannerSilently();
     };
-  }, [isOpen, scanMode, fullCleanup, stopScannerSilently, onClose, onScanSuccess]);
+  }, [isOpen, scanMode, activeCamIndex, availableCameras, fullCleanup, stopScannerSilently, onClose, onScanSuccess]);
 
   const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -178,22 +208,37 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
     if (!clean) return;
 
     sounds.playStampSound();
-    await fullCleanup();
     onScanSuccess(clean);
     onClose();
+    fullCleanup();
   };
 
   const handleClose = async () => {
-    await fullCleanup();
+    fullCleanup();
     onClose();
+  };
+
+  const toggleCamera = () => {
+    if (availableCameras.length <= 1) return;
+    sounds.playClick();
+    setActiveCamIndex((prev) => (prev + 1) % availableCameras.length);
   };
 
   if (!isOpen) return null;
 
-  // Render via createPortal directly into document.body to escape any parent CSS transforms
+  // Render via createPortal directly into document.body with 100dvh for true iOS Safari vertical centering
   return createPortal(
     <div
-      className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-fade-in overscroll-none"
+      className="fixed inset-0 z-[99999] h-[100dvh] w-screen flex items-center justify-center p-3 sm:p-4 bg-black/90 backdrop-blur-md overscroll-none touch-none select-none animate-fade-in"
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        touchAction: 'none',
+        overscrollBehavior: 'none',
+      }}
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           handleClose();
@@ -201,7 +246,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
       }}
     >
       <div
-        className="relative w-full max-w-sm bg-panel border border-line rounded-2xl p-5 shadow-2xl overflow-hidden"
+        className="relative w-full max-w-sm bg-panel border border-line rounded-2xl p-4 sm:p-5 shadow-2xl overflow-hidden my-auto max-h-[92dvh] flex flex-col justify-between"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header Tabs */}
@@ -236,39 +281,52 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
             </button>
           </div>
 
-          <button
-            onClick={handleClose}
-            className="chip !px-2 !py-1 text-mute hover:!text-bone"
-            title="Затвори"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            {availableCameras.length > 1 && scanMode === 'camera' && (
+              <button
+                type="button"
+                onClick={toggleCamera}
+                className="chip !px-2 !py-1 text-mute hover:!text-bone"
+                title="Смени камера"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            <button
+              onClick={handleClose}
+              className="chip !px-2 !py-1 text-mute hover:!text-bone"
+              title="Затвори"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {errorMsg && scanMode === 'manual' && (
-          <div className="mb-4 p-3 rounded-xl bg-coal border border-line text-xs font-mono text-mute flex items-start space-x-2">
+          <div className="mb-3 p-3 rounded-xl bg-coal border border-line text-xs font-mono text-mute flex items-start space-x-2">
             <span className="text-acid">ℹ</span>
             <span>{errorMsg}</span>
           </div>
         )}
 
-        {/* 1. CAMERA CONTAINER (Always mounted to prevent DOM null reference in html5-qrcode) */}
+        {/* 1. CAMERA CONTAINER */}
         <div className={scanMode === 'camera' ? 'block' : 'hidden'}>
           <div className="relative">
             {isInitializing && (
-              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-panel/95 rounded-xl font-mono min-h-[280px]">
+              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-panel/95 rounded-xl font-mono min-h-[260px]">
                 <div className="w-8 h-8 border-2 border-acid border-t-transparent rounded-full animate-spin mb-2" />
                 <p className="text-xs text-mute">Стартиране на задната камера...</p>
               </div>
             )}
 
-            <div className="relative w-full rounded-xl overflow-hidden border-2 border-acid/50 bg-black min-h-[280px]">
-              <div id={readerElementId} className="w-full h-full min-h-[280px]" />
+            <div className="relative w-full rounded-xl overflow-hidden border-2 border-acid/50 bg-black min-h-[260px] aspect-square flex items-center justify-center">
+              <div id={readerElementId} className="w-full h-full min-h-[260px]" />
 
               {/* Laser Scan Guide Corners & Scanline */}
               {!isInitializing && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                  <div className="w-52 h-52 border border-acid/50 rounded-xl relative overflow-hidden">
+                  <div className="w-48 h-48 border border-acid/50 rounded-xl relative overflow-hidden">
                     {/* Corner Reticles */}
                     <div className="absolute -top-1 -left-1 w-5 h-5 border-t-2 border-l-2 border-acid" />
                     <div className="absolute -top-1 -right-1 w-5 h-5 border-t-2 border-r-2 border-acid" />
@@ -302,7 +360,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
         {/* 2. MANUAL NUMBER / CODE ENTRY FORM */}
         <div className={scanMode === 'manual' ? 'block' : 'hidden'}>
           <form onSubmit={handleManualSubmit} className="space-y-4 py-2 font-mono animate-fade-in">
-            <div className="text-center pb-2">
+            <div className="text-center pb-1">
               <div className="w-12 h-12 rounded-full bg-coal border border-line flex items-center justify-center mx-auto mb-2 text-acid">
                 <Keyboard className="w-6 h-6" />
               </div>
@@ -321,6 +379,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
               <input
                 type="text"
                 required
+                autoFocus
                 value={manualCodeInput}
                 onChange={(e) => setManualCodeInput(e.target.value)}
                 placeholder="напр. #A1B2C3 или 0888123456"
@@ -336,7 +395,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
               <ArrowRight className="w-4 h-4" />
             </button>
 
-            <div className="pt-2 text-center text-[11px] text-mute">
+            <div className="pt-1 text-center text-[11px] text-mute">
               Системата разпознава автоматично кода на картата или телефонния номер.
             </div>
           </form>

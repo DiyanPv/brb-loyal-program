@@ -23,10 +23,10 @@ export const StampCelebrationModal: React.FC<StampCelebrationModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
 
-    // Auto-dismiss after 3.2 seconds
+    // Auto-dismiss after 5 seconds or user tap
     const timer = setTimeout(() => {
       onClose();
-    }, 3200);
+    }, 5000);
 
     return () => clearTimeout(timer);
   }, [isOpen, onClose]);
@@ -38,7 +38,16 @@ export const StampCelebrationModal: React.FC<StampCelebrationModalProps> = ({
   return createPortal(
     <div
       onClick={onClose}
-      className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md cursor-pointer animate-fade-in overscroll-none"
+      className="fixed inset-0 z-[99999] h-[100dvh] w-screen flex items-center justify-center p-4 bg-black/90 backdrop-blur-md cursor-pointer animate-fade-in overscroll-none touch-none select-none"
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        touchAction: 'none',
+        overscrollBehavior: 'none',
+      }}
     >
       {/* Shockwave Rings in Background */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
@@ -48,7 +57,7 @@ export const StampCelebrationModal: React.FC<StampCelebrationModalProps> = ({
 
       <div
         onClick={(e) => e.stopPropagation()}
-        className="relative w-full max-w-sm bg-panel border-2 border-acid rounded-3xl p-7 text-center shadow-acid-glow-lg overflow-hidden animate-stamp-impact my-auto"
+        className="relative w-full max-w-sm bg-panel border-2 border-acid rounded-3xl p-6 sm:p-7 text-center shadow-acid-glow-lg overflow-hidden animate-stamp-impact my-auto"
       >
         {/* Top Kicker Tag */}
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-acid text-ink font-mono text-[10px] uppercase font-black tracking-widest mb-4">
@@ -101,7 +110,10 @@ export const StampCelebrationModal: React.FC<StampCelebrationModalProps> = ({
         )}
 
         {/* Tap to dismiss hint */}
-        <div className="mt-6 pt-3 border-t border-line flex items-center justify-center gap-1.5 text-mute font-mono text-[10px]">
+        <div
+          onClick={onClose}
+          className="mt-6 pt-3 border-t border-line flex items-center justify-center gap-1.5 text-mute font-mono text-[10px] cursor-pointer hover:text-bone"
+        >
           <CheckCircle2 className="w-3 h-3 text-acid" />
           <span>Докосни за затваряне</span>
         </div>

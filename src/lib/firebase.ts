@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore, getFirestore } from 'firebase/firestore';
 
 export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyCgp5VRBJgqVVv-wU6EBBAGmEHzqCXltd4",
@@ -19,4 +19,15 @@ export const isFirebaseConfigured = (): boolean => {
 };
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-export const db = getFirestore(app);
+
+// Use long-polling to ensure rock-solid real-time updates on iOS Safari and mobile networks
+export const db = (() => {
+  try {
+    return initializeFirestore(app, {
+      experimentalForceLongPolling: true,
+      experimentalAutoDetectLongPolling: true,
+    } as any);
+  } catch {
+    return getFirestore(app);
+  }
+})();

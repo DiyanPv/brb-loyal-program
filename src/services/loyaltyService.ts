@@ -202,6 +202,22 @@ export class LoyaltyService {
   }
 
   // 2. CUSTOMERS
+  static async getCustomerById(id: string): Promise<Customer | null> {
+    if (!id) return null;
+    if (isFirebaseConfigured()) {
+      try {
+        const snap = await getDoc(doc(db, 'Customers', id));
+        if (snap.exists()) {
+          return snap.data() as Customer;
+        }
+      } catch (err) {
+        console.warn('Firestore getCustomerById failed:', err);
+      }
+    }
+    const customers = localSync.getCustomers();
+    return customers.find((c) => c.Id === id) || null;
+  }
+
   static async getCustomerByAuthToken(token: string): Promise<Customer | null> {
     if (!token) return null;
     const cleanToken = token.trim();
@@ -591,11 +607,17 @@ export class LoyaltyService {
     let unsubFirestore: (() => void) | null = null;
     if (isFirebaseConfigured()) {
       try {
-        unsubFirestore = onSnapshot(doc(db, 'Customers', customerId), (snap) => {
-          if (snap.exists()) {
-            onCustomerChange(snap.data() as Customer);
+        unsubFirestore = onSnapshot(
+          doc(db, 'Customers', customerId),
+          (snap) => {
+            if (snap.exists()) {
+              onCustomerChange(snap.data() as Customer);
+            }
+          },
+          (err) => {
+            console.warn('Firestore customer onSnapshot error:', err);
           }
-        });
+        );
       } catch (err) {
         console.warn('Firestore customer subscribe failed:', err);
       }

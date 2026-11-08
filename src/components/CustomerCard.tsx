@@ -41,6 +41,7 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
   // Track previous stamps to trigger realtime reactions
   const prevStampsRef = useRef(customer.CurrentStamps);
   const prevRewardRef = useRef(customer.HasRewardAvailable);
+  const prevVisitsRef = useRef(customer.TotalVisits);
 
   // Load Settings
   useEffect(() => {
@@ -53,11 +54,12 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
     };
   }, []);
 
-  // Realtime subscription to customer updates
+  // Realtime subscription + polling backup to ensure celebrations trigger across all mobile networks
   useEffect(() => {
-    const unsubscribeCustomer = LoyaltyService.subscribeToCustomer(customer.Id, (updated) => {
+    const handleCustomerUpdate = (updated: Customer) => {
       const prevStamps = prevStampsRef.current;
       const prevReward = prevRewardRef.current;
+      const prevVisits = prevVisitsRef.current;
 
       // Check if new stamp was added
       if (updated.CurrentStamps > prevStamps) {
@@ -93,17 +95,58 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
         triggerGrandFireworks();
         sounds.playRewardSound();
         setIsCelebrationOpen(true);
+      } else if (updated.TotalVisits > prevVisits) {
+        // Even if stamps cycled (e.g. 5 -> 0 on redeem)
+        sounds.playStampSound();
+        setIsCelebrationOpen(true);
       }
 
       prevStampsRef.current = updated.CurrentStamps;
       prevRewardRef.current = updated.HasRewardAvailable;
+      prevVisitsRef.current = updated.TotalVisits;
       setCustomer(updated);
-    });
+    };
+
+    // 1. Realtime Firestore onSnapshot listener
+    const unsubscribeCustomer = LoyaltyService.subscribeToCustomer(customer.Id, handleCustomerUpdate);
+
+    // 2. Fast Active Polling (every 2.5s) to guarantee updates on all mobile Safari networks
+    const pollTimer = setInterval(async () => {
+      try {
+        const fresh = await LoyaltyService.getCustomerById(customer.Id);
+        if (fresh) {
+          if (
+            fresh.CurrentStamps !== prevStampsRef.current ||
+            fresh.HasRewardAvailable !== prevRewardRef.current ||
+            fresh.TotalVisits !== prevVisitsRef.current ||
+            fresh.LastVisitAt !== customer.LastVisitAt
+          ) {
+            handleCustomerUpdate(fresh);
+          }
+        }
+      } catch (err) {
+        console.warn('Customer poll error:', err);
+      }
+    }, 2500);
+
+    // 3. Instant re-fetch on window focus or visibility change (e.g. unlocking phone / returning to Safari)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        LoyaltyService.getCustomerById(customer.Id).then((fresh) => {
+          if (fresh) handleCustomerUpdate(fresh);
+        }).catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', onVisibilityChange);
 
     return () => {
       unsubscribeCustomer();
+      clearInterval(pollTimer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', onVisibilityChange);
     };
-  }, [customer.Id]);
+  }, [customer.Id, customer.LastVisitAt]);
 
   // PWA install prompt handler
   useEffect(() => {
@@ -126,7 +169,8 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
     }
   };
 
-  const qrPayload = `barber-loyalty://stamp/${customer.AuthToken}?n=${encodeURIComponent(customer.FullName)}&p=${encodeURIComponent(customer.Phone)}&s=${customer.CurrentStamps}&id=${encodeURIComponent(customer.Id)}`;
+  // High-contrast clean QR token payload (short for instant decoding by any phone camera)
+  const qrPayload = customer.AuthToken;
 
   const copyQrValue = () => {
     sounds.playClick();
@@ -306,23 +350,17 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
           </p>
 
           <div
-            className="inline-block relative p-3 rounded-xl bg-white shadow-2xl border-2 border-acid cursor-pointer transition-transform hover:scale-105 active:scale-95"
+            className="inline-block relative p-4 rounded-2xl bg-white shadow-2xl border-2 border-acid cursor-pointer transition-transform hover:scale-105 active:scale-95 mx-auto"
             onClick={() => setShowQrExpanded(!showQrExpanded)}
             title="Кликни за увеличение"
           >
             <QRCodeSVG
               value={qrPayload}
-              size={showQrExpanded ? 260 : 200}
+              size={showQrExpanded ? 260 : 210}
               level="M"
               includeMargin={true}
-              className="rounded-lg transition-all duration-300"
+              className="rounded-lg transition-all duration-300 mx-auto"
             />
-
-            {/* NV Signature Corner Brackets */}
-            <div className="absolute top-1 left-1 w-3 h-3 border-t-2 border-l-2 border-ink" />
-            <div className="absolute top-1 right-1 w-3 h-3 border-t-2 border-r-2 border-ink" />
-            <div className="absolute bottom-1 left-1 w-3 h-3 border-b-2 border-l-2 border-ink" />
-            <div className="absolute bottom-1 right-1 w-3 h-3 border-b-2 border-r-2 border-ink" />
           </div>
 
           <div className="mt-4 flex flex-col items-center justify-center gap-2">
