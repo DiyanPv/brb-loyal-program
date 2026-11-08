@@ -20,9 +20,9 @@ import {
   AlertTriangle,
   Database,
   History,
-  Copy,
   Plus,
-  ArrowRight
+  ArrowRight,
+  Trash2
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -71,7 +71,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToClient }) => {
   // Settings form states
   const [settingsForm, setSettingsForm] = useState<ShopSettings>(settings);
   const [settingsSavedMsg, setSettingsSavedMsg] = useState(false);
-  const [sqlCopied, setSqlCopied] = useState(false);
 
   // Load Data
   const loadData = async () => {
@@ -259,6 +258,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToClient }) => {
     }
   };
 
+  // 6. Clear All Data (Full Reset)
+  const [isClearingData, setIsClearingData] = useState(false);
+  const handleClearAllData = async () => {
+    const confirmed = window.confirm(
+      'ВНИМАНИЕ: Това действие ще изтрие абсолютно всички клиенти и история на посещенията от базата данни (Firestore). Сигурни ли сте, че искате да нулирате всичко?'
+    );
+    if (!confirmed) return;
+
+    setIsClearingData(true);
+    try {
+      await LoyaltyService.clearAllData();
+      setCustomers([]);
+      setActionFeedback({
+        type: 'success',
+        message: 'Базата данни беше напълно изчистена! Всички клиенти са изтрити (0 клиенти).',
+      });
+      sounds.playClick();
+    } catch (err) {
+      console.error('Failed to clear database:', err);
+      setActionFeedback({
+        type: 'error',
+        message: 'Възникна грешка при изчистване на базата данни.',
+      });
+    } finally {
+      setIsClearingData(false);
+    }
+  };
+
   // Filtered Customers
   const filteredCustomers = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
@@ -388,11 +415,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToClient }) => {
       {/* ACTION FEEDBACK FLOATING TOAST (SAFE AREA CENTERED) */}
       {actionFeedback && (
         <div
-          className="fixed left-4 right-4 z-[99999] max-w-md mx-auto pointer-events-auto animate-fade-in"
+          className="fixed left-3 right-3 sm:left-1/2 sm:-translate-x-1/2 z-[99999] max-w-sm sm:max-w-md w-auto pointer-events-auto animate-fade-in"
           style={{ top: 'calc(env(safe-area-inset-top, 20px) + 16px)' }}
         >
           <div
-            className={`p-4 rounded-2xl border shadow-2xl flex items-center justify-between gap-3 font-mono text-xs backdrop-blur-xl ${
+            className={`p-3.5 sm:p-4 rounded-2xl border shadow-2xl flex items-center justify-between gap-3 font-mono text-xs backdrop-blur-xl break-words overflow-hidden ${
               actionFeedback.type === 'success'
                 ? 'bg-ink/95 border-acid text-acid shadow-acid-glow'
                 : actionFeedback.type === 'warning'
@@ -400,7 +427,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToClient }) => {
                 : 'bg-ink/95 border-red-500 text-red-200 shadow-xl'
             }`}
           >
-            <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-3 min-w-0">
               {actionFeedback.type === 'success' ? (
                 <div className="w-8 h-8 rounded-full bg-acid/20 border border-acid flex items-center justify-center shrink-0">
                   <CheckCircle className="w-5 h-5 text-acid" />
@@ -410,10 +437,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToClient }) => {
                   <AlertTriangle className="w-5 h-5 text-amber-400" />
                 </div>
               )}
-              <div>
-                <p className="font-bold text-sm text-bone">{actionFeedback.message}</p>
+              <div className="min-w-0">
+                <p className="font-bold text-sm text-bone break-words">{actionFeedback.message}</p>
                 {actionFeedback.customer && (
-                  <p className="opacity-90 text-[11px] mt-0.5 text-acid font-bold">
+                  <p className="opacity-90 text-[11px] mt-0.5 text-acid font-bold truncate">
                     {actionFeedback.customer.FullName} ({actionFeedback.customer.Phone}) • Печати:{' '}
                     {actionFeedback.customer.CurrentStamps}/{settings.RequiredStamps}
                   </p>
@@ -422,7 +449,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToClient }) => {
             </div>
             <button
               onClick={() => setActionFeedback(null)}
-              className="chip !px-2 !py-1 text-bone hover:!text-acid ml-2 shrink-0"
+              className="chip !px-2 !py-1 text-bone hover:!text-acid ml-2 shrink-0 cursor-pointer"
               title="Затвори"
             >
               ✕
@@ -961,32 +988,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToClient }) => {
             </div>
           </form>
 
-          {/* Database Setup Helper */}
-          <div className="card-nv rounded-2xl p-5 space-y-3">
-            <div className="flex items-center justify-between">
+          {/* Danger Zone: Full Database Reset */}
+          <div className="card-nv rounded-2xl p-6 space-y-4 border-red-500/40 bg-red-950/20">
+            <div>
               <div className="flex items-center space-x-2">
-                <Database className="w-4 h-4 text-acid" />
-                <h4 className="font-mono text-xs font-bold uppercase tracking-wider text-bone">
-                  Supabase Интеграция & SQL Схема
-                </h4>
+                <Trash2 className="w-4 h-4 text-red-400" />
+                <span className="kicker !text-red-400">ОПАСНА ЗОНА // ПЪЛЕН РЕСТАРТ</span>
               </div>
-
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(`-- Изпълнете supabase/schema.sql в Supabase SQL Editor`);
-                  setSqlCopied(true);
-                  setTimeout(() => setSqlCopied(false), 2000);
-                }}
-                className="chip !text-[11px] !py-1 text-acid"
-              >
-                <Copy className="w-3 h-3" />
-                <span>{sqlCopied ? 'Копирано!' : 'Копирай път'}</span>
-              </button>
+              <h4 className="h-display text-lg text-bone mt-1">
+                Изчисти всички клиенти и история
+              </h4>
+              <p className="font-mono text-xs text-mute mt-1 leading-relaxed">
+                Изтрива перманентно всички регистрирани клиенти и логове на посещения от базата данни (Firebase Firestore) и локалното кеширане. Приложението стартира на чисто с 0 клиенти.
+              </p>
             </div>
 
-            <p className="font-mono text-xs text-mute">
-              SQL миграционният скрипт е наличен в <code className="text-acid">supabase/schema.sql</code>. Поставете вашите ключове в <code className="text-acid">.env</code> файла.
-            </p>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={handleClearAllData}
+                disabled={isClearingData}
+                className="btn !bg-red-500/20 hover:!bg-red-500/30 text-red-300 border border-red-500/50 rounded-xl text-xs py-2.5 px-4 flex items-center space-x-2 transition-all cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4 text-red-400" />
+                <span>{isClearingData ? 'Изчистване на базата...' : 'ИЗЧИСТИ ВСИЧКИ КЛИЕНТИ (0 КЛИЕНТИ)'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

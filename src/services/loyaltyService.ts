@@ -5,6 +5,7 @@ import {
   getDoc,
   getDocs,
   setDoc,
+  deleteDoc,
   query,
   where,
   limit,
@@ -22,43 +23,6 @@ const DEFAULT_SETTINGS: ShopSettings = {
   UpdatedAt: new Date().toISOString(),
 };
 
-// Default seed customers for mock mode / initial testing
-const SEED_CUSTOMERS: Customer[] = [
-  {
-    Id: 'c1-alex-petrov',
-    FullName: 'Александър Петров',
-    Phone: '0888123456',
-    CurrentStamps: 4,
-    TotalVisits: 9,
-    HasRewardAvailable: false,
-    AuthToken: 'token-alex-12345',
-    LastVisitAt: new Date(Date.now() - 26 * 3600 * 1000).toISOString(),
-    CreatedAt: new Date(Date.now() - 30 * 86400 * 1000).toISOString(),
-  },
-  {
-    Id: 'c2-georgi-dimitrov',
-    FullName: 'Георги Димитров',
-    Phone: '0899654321',
-    CurrentStamps: 5,
-    TotalVisits: 15,
-    HasRewardAvailable: true,
-    AuthToken: 'token-georgi-67890',
-    LastVisitAt: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
-    CreatedAt: new Date(Date.now() - 60 * 86400 * 1000).toISOString(),
-  },
-  {
-    Id: 'c3-martin-ivanov',
-    FullName: 'Мартин Иванов',
-    Phone: '0877112233',
-    CurrentStamps: 2,
-    TotalVisits: 2,
-    HasRewardAvailable: false,
-    AuthToken: 'token-martin-11223',
-    LastVisitAt: new Date(Date.now() - 48 * 3600 * 1000).toISOString(),
-    CreatedAt: new Date(Date.now() - 14 * 86400 * 1000).toISOString(),
-  },
-];
-
 // Local sync engine using localStorage + BroadcastChannel (fallback)
 class LocalSyncEngine {
   private channel: BroadcastChannel | null = null;
@@ -75,9 +39,9 @@ class LocalSyncEngine {
   }
 
   getSettings(): ShopSettings {
-    const raw = localStorage.getItem('barber_settings');
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('barber_settings') : null;
     if (!raw) {
-      localStorage.setItem('barber_settings', JSON.stringify(DEFAULT_SETTINGS));
+      if (typeof window !== 'undefined') localStorage.setItem('barber_settings', JSON.stringify(DEFAULT_SETTINGS));
       return DEFAULT_SETTINGS;
     }
     try {
@@ -88,30 +52,29 @@ class LocalSyncEngine {
   }
 
   saveSettings(settings: ShopSettings) {
-    localStorage.setItem('barber_settings', JSON.stringify(settings));
+    if (typeof window !== 'undefined') localStorage.setItem('barber_settings', JSON.stringify(settings));
     this.broadcast('SETTINGS_UPDATED', settings);
   }
 
   getCustomers(): Customer[] {
-    const raw = localStorage.getItem('barber_customers');
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('barber_customers') : null;
     if (!raw) {
-      localStorage.setItem('barber_customers', JSON.stringify(SEED_CUSTOMERS));
-      return SEED_CUSTOMERS;
+      return [];
     }
     try {
       return JSON.parse(raw);
     } catch {
-      return SEED_CUSTOMERS;
+      return [];
     }
   }
 
   saveCustomers(customers: Customer[]) {
-    localStorage.setItem('barber_customers', JSON.stringify(customers));
+    if (typeof window !== 'undefined') localStorage.setItem('barber_customers', JSON.stringify(customers));
     this.broadcast('CUSTOMERS_UPDATED', customers);
   }
 
   getLogs(): VisitLog[] {
-    const raw = localStorage.getItem('barber_visit_logs');
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('barber_visit_logs') : null;
     if (!raw) return [];
     try {
       return JSON.parse(raw);
@@ -123,7 +86,17 @@ class LocalSyncEngine {
   addLog(log: VisitLog) {
     const logs = this.getLogs();
     logs.unshift(log);
-    localStorage.setItem('barber_visit_logs', JSON.stringify(logs.slice(0, 100)));
+    if (typeof window !== 'undefined') localStorage.setItem('barber_visit_logs', JSON.stringify(logs.slice(0, 100)));
+  }
+
+  clearAll() {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('barber_customers');
+      localStorage.removeItem('barber_visit_logs');
+      localStorage.removeItem('barber_auth_token');
+    }
+    this.broadcast('CUSTOMERS_UPDATED', []);
+    this.broadcast('LOGS_UPDATED', []);
   }
 
   broadcast(type: string, payload: unknown) {
@@ -325,6 +298,7 @@ export class LoyaltyService {
         if (!snapUser.empty) {
           return snapUser.docs[0].data() as Customer;
         }
+        return null;
       } catch (err) {
         console.warn('Firestore getCustomerByEmailOrUsername failed:', err);
       }
@@ -647,16 +621,14 @@ export class LoyaltyService {
       try {
         const ref = collection(db, 'Customers');
         const snap = await getDocs(ref);
-        if (!snap.empty) {
-          const list: Customer[] = [];
-          snap.forEach((d) => list.push(d.data() as Customer));
-          return list.sort((a, b) => {
-            if (!a.LastVisitAt && !b.LastVisitAt) return 0;
-            if (!a.LastVisitAt) return 1;
-            if (!b.LastVisitAt) return -1;
-            return new Date(b.LastVisitAt).getTime() - new Date(a.LastVisitAt).getTime();
-          });
-        }
+        const list: Customer[] = [];
+        snap.forEach((d) => list.push(d.data() as Customer));
+        return list.sort((a, b) => {
+          if (!a.LastVisitAt && !b.LastVisitAt) return 0;
+          if (!a.LastVisitAt) return 1;
+          if (!b.LastVisitAt) return -1;
+          return new Date(b.LastVisitAt).getTime() - new Date(a.LastVisitAt).getTime();
+        });
       } catch (err) {
         console.warn('Firestore getAllCustomers failed:', err);
       }
@@ -829,11 +801,9 @@ export class LoyaltyService {
           q = query(collection(db, 'VisitLogs'), where('CustomerId', '==', customerId), limit(50));
         }
         const snap = await getDocs(q);
-        if (!snap.empty) {
-          const logs: VisitLog[] = [];
-          snap.forEach((d) => logs.push(d.data() as VisitLog));
-          return logs.sort((a, b) => new Date(b.CreatedAt).getTime() - new Date(a.CreatedAt).getTime());
-        }
+        const logs: VisitLog[] = [];
+        snap.forEach((d) => logs.push(d.data() as VisitLog));
+        return logs.sort((a, b) => new Date(b.CreatedAt).getTime() - new Date(a.CreatedAt).getTime());
       } catch (err) {
         console.warn('Firestore getVisitLogs failed:', err);
       }
@@ -844,6 +814,24 @@ export class LoyaltyService {
       return logs.filter((l) => l.CustomerId === customerId);
     }
     return logs;
+  }
+
+  // Clear all customers and visit logs permanently (Full Reset)
+  static async clearAllData(): Promise<void> {
+    if (isFirebaseConfigured()) {
+      try {
+        const custSnap = await getDocs(collection(db, 'Customers'));
+        const deleteCustPromises = custSnap.docs.map((d) => deleteDoc(doc(db, 'Customers', d.id)));
+        await Promise.all(deleteCustPromises);
+
+        const logSnap = await getDocs(collection(db, 'VisitLogs'));
+        const deleteLogPromises = logSnap.docs.map((d) => deleteDoc(doc(db, 'VisitLogs', d.id)));
+        await Promise.all(deleteLogPromises);
+      } catch (err) {
+        console.error('Error clearing Firestore data:', err);
+      }
+    }
+    localSync.clearAll();
   }
 
   // 6. REALTIME SUBSCRIPTIONS (FIRESTORE ONSNAPSHOT)
