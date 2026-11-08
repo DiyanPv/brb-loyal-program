@@ -287,6 +287,10 @@ export class LoyaltyService {
       if (match && match[1]) clean = match[1];
     }
 
+    // 0. Direct document Id match
+    const byId = await this.getCustomerById(qrId || clean);
+    if (byId) return byId;
+
     // 1. Try exact AuthToken match
     const byToken = await this.getCustomerByAuthToken(clean);
     if (byToken) return byToken;
@@ -306,32 +310,27 @@ export class LoyaltyService {
       const shortToken = tokenLower.slice(-6);
 
       return (
+        c.Id === clean ||
         tokenLower === cleanLower ||
         tokenLower.endsWith(cleanLower) ||
         shortToken === cleanLower ||
         phoneDigits === cleanLower ||
-        phoneDigits.endsWith(cleanLower) ||
-        c.Id === clean
+        phoneDigits.endsWith(cleanLower)
       );
     });
 
     if (found) return found;
 
-    // 4. AUTO-ADD / IMPORT CUSTOMER ON THE FLY!
-    // When a barber scans a QR code (or enters a phone number) that is not in the DB yet,
-    // automatically add the client to the database so it never rejects with "Invalid customer"!
-    if (qrName || qrPhone || clean.startsWith('bl_') || clean.replace(/[^0-9]/g, '').length >= 6) {
-      const digits = clean.replace(/[^0-9]/g, '');
-      const name = qrName || (digits.length >= 6 ? `Клиент ${digits.slice(-4)}` : 'Нов клиент');
-      const phone = qrPhone || (digits.length >= 6 ? clean : '0888' + Math.floor(100000 + Math.random() * 900000));
+    // 4. AUTO-ADD ONLY if explicit name and phone are provided
+    if (qrName && qrPhone) {
       const newCustomer: Customer = {
         Id: qrId || ((typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'c_' + Date.now()),
-        FullName: name,
-        Phone: phone,
+        FullName: qrName,
+        Phone: qrPhone,
         CurrentStamps: qrStamps > 0 ? qrStamps : 0,
         TotalVisits: qrStamps > 0 ? qrStamps : 0,
         HasRewardAvailable: false,
-        AuthToken: clean.startsWith('bl_') ? clean : 'bl_' + Math.random().toString(36).substring(2, 10),
+        AuthToken: 'bl_' + Math.random().toString(36).substring(2, 10),
         LastVisitAt: null,
         CreatedAt: new Date().toISOString(),
       };

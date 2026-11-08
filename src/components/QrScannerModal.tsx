@@ -19,6 +19,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
   const [manualCodeInput, setManualCodeInput] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [isScanSuccess, setIsScanSuccess] = useState(false);
   const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null);
 
@@ -71,16 +72,21 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
       if (hasScannedRef.current) return;
       hasScannedRef.current = true;
 
+      setIsScanSuccess(true);
       sounds.playStampSound();
       if (typeof window !== 'undefined' && 'vibrate' in navigator) {
         try {
-          navigator.vibrate([80, 40, 100]);
+          navigator.vibrate([100, 50, 150]);
         } catch {}
       }
 
       stopCamera();
-      onScanSuccess(codeText);
-      onClose();
+
+      setTimeout(() => {
+        onScanSuccess(codeText);
+        onClose();
+        setIsScanSuccess(false);
+      }, 350);
     },
     [onScanSuccess, onClose, stopCamera]
   );
@@ -428,8 +434,19 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
                 muted
               />
 
+              {/* Instant Scan Success Confirmation Overlay */}
+              {isScanSuccess && (
+                <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-acid/95 text-ink rounded-xl font-mono animate-fade-in select-none">
+                  <div className="w-14 h-14 rounded-full bg-ink text-acid flex items-center justify-center mb-2 shadow-2xl animate-bounce">
+                    <span className="text-2xl font-black">✓</span>
+                  </div>
+                  <p className="text-base font-black tracking-wider uppercase">УСПЕШНО СКАНИРАНО!</p>
+                  <p className="text-xs font-bold text-ink/80 mt-1">Добавяне на печат...</p>
+                </div>
+              )}
+
               {/* Laser Scan Guide Corners & Scanline */}
-              {!isInitializing && (
+              {!isInitializing && !isScanSuccess && (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <div className="w-52 h-52 border border-acid/50 rounded-xl relative overflow-hidden">
                     {/* Corner Reticles */}

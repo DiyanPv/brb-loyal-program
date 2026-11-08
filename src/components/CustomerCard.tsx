@@ -110,7 +110,7 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
     // 1. Realtime Firestore onSnapshot listener
     const unsubscribeCustomer = LoyaltyService.subscribeToCustomer(customer.Id, handleCustomerUpdate);
 
-    // 2. Fast Active Polling (every 2.5s) to guarantee updates on all mobile Safari networks
+    // 2. High-frequency Polling Backup (every 800ms) to guarantee near-instant (< 1s) sync across all mobile networks
     const pollTimer = setInterval(async () => {
       try {
         const fresh = await LoyaltyService.getCustomerById(customer.Id);
@@ -127,7 +127,7 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
       } catch (err) {
         console.warn('Customer poll error:', err);
       }
-    }, 2500);
+    }, 800);
 
     // 3. Instant re-fetch on window focus or visibility change (e.g. unlocking phone / returning to Safari)
     const onVisibilityChange = () => {
@@ -169,8 +169,8 @@ export const CustomerCard: React.FC<CustomerCardProps> = ({ initialCustomer, onL
     }
   };
 
-  // High-contrast clean QR token payload (short for instant decoding by any phone camera)
-  const qrPayload = customer.AuthToken;
+  // High-contrast clean QR token payload using direct document ID for 100% reliable matching
+  const qrPayload = customer.Id;
 
   const copyQrValue = () => {
     sounds.playClick();
