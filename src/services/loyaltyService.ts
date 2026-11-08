@@ -1,4 +1,16 @@
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { db } from '../lib/firebase';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  query,
+  where,
+  limit,
+  addDoc,
+  onSnapshot,
+} from 'firebase/firestore';
 import { Customer, ShopSettings, VisitLog, StampResult } from '../types';
 
 const DEFAULT_SETTINGS: ShopSettings = {
@@ -47,7 +59,7 @@ const SEED_CUSTOMERS: Customer[] = [
   },
 ];
 
-// Local sync engine using localStorage + BroadcastChannel
+// Local sync engine using localStorage + BroadcastChannel (fallback)
 class LocalSyncEngine {
   private channel: BroadcastChannel | null = null;
   private listeners: Map<string, Set<(data: unknown) => void>> = new Map();
@@ -150,31 +162,17 @@ const localSync = new LocalSyncEngine();
 export class LoyaltyService {
   // 1. SETTINGS
   static async getSettings(): Promise<ShopSettings> {
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('ShopSettings')
-          .select('*')
-          .order('UpdatedAt', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (!error && data) {
-          return data as ShopSettings;
-        }
-
-        // If table is empty, create default
-        if (!error && !data) {
-          const { data: inserted } = await supabase
-            .from('ShopSettings')
-            .insert([DEFAULT_SETTINGS])
-            .select()
-            .single();
-          if (inserted) return inserted as ShopSettings;
-        }
-      } catch (err) {
-        console.warn('Failed to fetch settings from Supabase, using local fallback:', err);
+    try {
+      const ref = doc(db, 'ShopSettings', 'default');
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        return snap.data() as ShopSettings;
+      } else {
+        await setDoc(ref, DEFAULT_SETTINGS);
+        return DEFAULT_SETTINGS;
       }
+    } catch (err) {
+      console.warn('Firestore getSettings failed, using local fallback:', err);
     }
     return localSync.getSettings();
   }
@@ -187,66 +185,15 @@ export class LoyaltyService {
       UpdatedAt: new Date().toISOString(),
     };
 
-    const oldRequired = current.RequiredStamps;
-    const newRequired = updated.RequiredStamps;
-
-    // Supabase update
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        await supabase
-          .from('ShopSettings')
-          .update(updated)
-          .eq('Id', current.Id);
-
-        // Stamp threshold adjustments
-        if (newRequired < oldRequired) {
-          // Reduced threshold: any customer with stamps >= newRequired gets reward activated and stamps capped
-          const { data: affectedCustomers } = await supabase
-            .from('Customers')
-            .select('*')
-            .gte('CurrentStamps', newRequired);
-
-          if (affectedCustomers && affectedCustomers.length > 0) {
-            for (const c of affectedCustomers) {
-              await supabase
-                .from('Customers')
-                .update({
-                  HasRewardAvailable: true,
-                  CurrentStamps: newRequired,
-                })
-                .eq('Id', c.Id);
-            }
-          }
-        }
-        return updated;
-      } catch (err) {
-        console.warn('Error updating Supabase settings:', err);
-      }
+    try {
+      const ref = doc(db, 'ShopSettings', 'default');
+      await setDoc(ref, updated, { merge: true });
+      return updated;
+    } catch (err) {
+      console.warn('Firestore updateSettings failed, using local fallback:', err);
     }
 
-    // Local fallback update
     localSync.saveSettings(updated);
-
-    // Local threshold logic
-    if (newRequired < oldRequired) {
-      const customers = localSync.getCustomers();
-      let changed = false;
-      const modified = customers.map((c) => {
-        if (c.CurrentStamps >= newRequired) {
-          changed = true;
-          return {
-            ...c,
-            HasRewardAvailable: true,
-            CurrentStamps: newRequired,
-          };
-        }
-        return c;
-      });
-      if (changed) {
-        localSync.saveCustomers(modified);
-      }
-    }
-
     return updated;
   }
 
@@ -255,20 +202,14 @@ export class LoyaltyService {
     if (!token) return null;
     const cleanToken = token.trim();
 
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('Customers')
-          .select('*')
-          .eq('AuthToken', cleanToken)
-          .maybeSingle();
-
-        if (!error && data) {
-          return data as Customer;
-        }
-      } catch (err) {
-        console.warn('Supabase fetch customer by token failed:', err);
+    try {
+      const q = query(collection(db, 'Customers'), where('AuthToken', '==', cleanToken), limit(1));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        return snap.docs[0].data() as Customer;
       }
+    } catch (err) {
+      console.warn('Firestore getCustomerByAuthToken failed:', err);
     }
 
     const customers = localSync.getCustomers();
@@ -279,36 +220,29 @@ export class LoyaltyService {
     if (!phone) return null;
     const cleanPhone = phone.replace(/[\s\-()]/g, '');
 
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('Customers')
-          .select('*')
-          .eq('Phone', cleanPhone)
-          .maybeSingle();
-
-        if (!error && data) {
-          return data as Customer;
-        }
-      } catch (err) {
-        console.warn('Supabase fetch customer by phone failed:', err);
+    try {
+      const q = query(collection(db, 'Customers'), where('Phone', '==', cleanPhone), limit(1));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        return snap.docs[0].data() as Customer;
       }
+    } catch (err) {
+      console.warn('Firestore getCustomerByPhone failed:', err);
     }
 
     const customers = localSync.getCustomers();
     return customers.find((c) => c.Phone.replace(/[\s\-()]/g, '') === cleanPhone) || null;
   }
 
-  /**
-   * Universal customer resolver:
-   * Supports raw AuthToken, QR uri (barber-loyalty://stamp/...), phone number,
-   * or last 6 alphanumeric characters of code/phone for manual admin typing!
-   */
   static async getCustomerByIdentifier(identifier: string): Promise<Customer | null> {
     if (!identifier) return null;
     let clean = identifier.trim();
     if (clean.startsWith('barber-loyalty://stamp/')) {
       clean = clean.replace('barber-loyalty://stamp/', '').trim();
+    }
+    if (clean.includes('token=')) {
+      const match = clean.match(/token=([a-zA-Z0-9_-]+)/);
+      if (match && match[1]) clean = match[1];
     }
 
     // 1. Try exact AuthToken match
@@ -319,7 +253,7 @@ export class LoyaltyService {
     const byPhone = await this.getCustomerByPhone(clean);
     if (byPhone) return byPhone;
 
-    // 3. Try matching by short code (case-insensitive substring of AuthToken or Phone)
+    // 3. Try matching by short code
     const all = await this.getAllCustomers();
     const cleanLower = clean.toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -365,20 +299,12 @@ export class LoyaltyService {
       CreatedAt: new Date().toISOString(),
     };
 
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('Customers')
-          .insert([newCustomer])
-          .select()
-          .single();
-
-        if (!error && data) {
-          return data as Customer;
-        }
-      } catch (err) {
-        console.warn('Failed to insert customer to Supabase:', err);
-      }
+    try {
+      const ref = doc(db, 'Customers', newCustomer.Id);
+      await setDoc(ref, newCustomer);
+      return newCustomer;
+    } catch (err) {
+      console.warn('Firestore registerCustomer failed, falling back to local:', err);
     }
 
     // Local fallback
@@ -389,19 +315,21 @@ export class LoyaltyService {
   }
 
   static async getAllCustomers(): Promise<Customer[]> {
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('Customers')
-          .select('*')
-          .order('LastVisitAt', { ascending: false, nullsFirst: false });
-
-        if (!error && data) {
-          return data as Customer[];
-        }
-      } catch (err) {
-        console.warn('Failed to get all customers from Supabase:', err);
+    try {
+      const ref = collection(db, 'Customers');
+      const snap = await getDocs(ref);
+      if (!snap.empty) {
+        const list: Customer[] = [];
+        snap.forEach((d) => list.push(d.data() as Customer));
+        return list.sort((a, b) => {
+          if (!a.LastVisitAt && !b.LastVisitAt) return 0;
+          if (!a.LastVisitAt) return 1;
+          if (!b.LastVisitAt) return -1;
+          return new Date(b.LastVisitAt).getTime() - new Date(a.LastVisitAt).getTime();
+        });
       }
+    } catch (err) {
+      console.warn('Firestore getAllCustomers failed:', err);
     }
 
     const customers = localSync.getCustomers();
@@ -465,32 +393,20 @@ export class LoyaltyService {
       CreatedAt: nowIso,
     };
 
-    // Write to Supabase if available
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        await supabase
-          .from('Customers')
-          .update({
-            CurrentStamps: updatedCustomer.CurrentStamps,
-            TotalVisits: updatedCustomer.TotalVisits,
-            HasRewardAvailable: updatedCustomer.HasRewardAvailable,
-            LastVisitAt: updatedCustomer.LastVisitAt,
-          })
-          .eq('Id', customer.Id);
+    try {
+      await setDoc(doc(db, 'Customers', customer.Id), updatedCustomer, { merge: true });
+      await addDoc(collection(db, 'VisitLogs'), log);
 
-        await supabase.from('VisitLogs').insert([log]);
-
-        return {
-          success: true,
-          message: rewardUnlocked
-            ? `Поздравления! Клиентът отключи награда: ${settings.DiscountText}!`
-            : `Успешно добавен печат (${updatedCustomer.CurrentStamps}/${settings.RequiredStamps})!`,
-          customer: updatedCustomer,
-          rewardUnlocked,
-        };
-      } catch (err) {
-        console.warn('Failed to update customer in Supabase:', err);
-      }
+      return {
+        success: true,
+        message: rewardUnlocked
+          ? `Поздравления! Клиентът отключи награда: ${settings.DiscountText}!`
+          : `Успешно добавен печат (${updatedCustomer.CurrentStamps}/${settings.RequiredStamps})!`,
+        customer: updatedCustomer,
+        rewardUnlocked,
+      };
+    } catch (err) {
+      console.warn('Firestore addStamp failed, updating local:', err);
     }
 
     // Local fallback
@@ -514,26 +430,8 @@ export class LoyaltyService {
 
   // 4. REWARD REDEMPTION
   static async redeemReward(customerId: string): Promise<{ success: boolean; message: string; customer?: Customer }> {
-    let customer: Customer | null = null;
-    const settings = await this.getSettings();
-
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const { data } = await supabase
-          .from('Customers')
-          .select('*')
-          .eq('Id', customerId)
-          .maybeSingle();
-        if (data) customer = data as Customer;
-      } catch (err) {
-        console.warn('Error fetching customer for redeem:', err);
-      }
-    }
-
-    if (!customer) {
-      const customers = localSync.getCustomers();
-      customer = customers.find((c) => c.Id === customerId) || null;
-    }
+    const all = await this.getAllCustomers();
+    const customer = all.find((c) => c.Id === customerId);
 
     if (!customer) {
       return { success: false, message: 'Клиентът не е намерен!' };
@@ -543,6 +441,7 @@ export class LoyaltyService {
       return { success: false, message: 'Клиентът няма налична активна награда за усвояване!' };
     }
 
+    const settings = await this.getSettings();
     const nowIso = new Date().toISOString();
     const updatedCustomer: Customer = {
       ...customer,
@@ -559,31 +458,19 @@ export class LoyaltyService {
       CreatedAt: nowIso,
     };
 
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        await supabase
-          .from('Customers')
-          .update({
-            CurrentStamps: 0,
-            HasRewardAvailable: false,
-            TotalVisits: updatedCustomer.TotalVisits,
-            LastVisitAt: updatedCustomer.LastVisitAt,
-          })
-          .eq('Id', customer.Id);
+    try {
+      await setDoc(doc(db, 'Customers', customer.Id), updatedCustomer, { merge: true });
+      await addDoc(collection(db, 'VisitLogs'), log);
 
-        await supabase.from('VisitLogs').insert([log]);
-
-        return {
-          success: true,
-          message: `Наградата (${settings.DiscountText}) е приложена успешно! Картата е нулирана.`,
-          customer: updatedCustomer,
-        };
-      } catch (err) {
-        console.warn('Error redeeming reward in Supabase:', err);
-      }
+      return {
+        success: true,
+        message: `Наградата (${settings.DiscountText}) е приложена успешно! Картата е нулирана.`,
+        customer: updatedCustomer,
+      };
+    } catch (err) {
+      console.warn('Firestore redeemReward failed, updating local:', err);
     }
 
-    // Local fallback
     const customers = localSync.getCustomers();
     const idx = customers.findIndex((c) => c.Id === customer.Id);
     if (idx !== -1) {
@@ -601,17 +488,19 @@ export class LoyaltyService {
 
   // 5. VISIT LOGS
   static async getVisitLogs(customerId?: string): Promise<VisitLog[]> {
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        let query = supabase.from('VisitLogs').select('*').order('CreatedAt', { ascending: false });
-        if (customerId) {
-          query = query.eq('CustomerId', customerId);
-        }
-        const { data, error } = await query.limit(50);
-        if (!error && data) return data as VisitLog[];
-      } catch (err) {
-        console.warn('Failed to fetch visit logs from Supabase:', err);
+    try {
+      let q = query(collection(db, 'VisitLogs'), limit(50));
+      if (customerId) {
+        q = query(collection(db, 'VisitLogs'), where('CustomerId', '==', customerId), limit(50));
       }
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const logs: VisitLog[] = [];
+        snap.forEach((d) => logs.push(d.data() as VisitLog));
+        return logs.sort((a, b) => new Date(b.CreatedAt).getTime() - new Date(a.CreatedAt).getTime());
+      }
+    } catch (err) {
+      console.warn('Firestore getVisitLogs failed:', err);
     }
 
     const logs = localSync.getLogs();
@@ -621,119 +510,75 @@ export class LoyaltyService {
     return logs;
   }
 
-  // 6. REALTIME SUBSCRIPTIONS
+  // 6. REALTIME SUBSCRIPTIONS (FIRESTORE ONSNAPSHOT)
   static subscribeToCustomer(
     customerId: string,
     onCustomerChange: (customer: Customer) => void
   ): () => void {
-    // 1. Supabase Realtime channel
-    if (isSupabaseConfigured() && supabase) {
-      const channelName = `customer-realtime-${customerId}-${Date.now()}`;
-      const channel = supabase
-        .channel(channelName)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'Customers',
-            filter: `Id=eq.${customerId}`,
-          },
-          (payload) => {
-            if (payload.new && (payload.new as Customer).Id === customerId) {
-              onCustomerChange(payload.new as Customer);
-            }
-          }
-        )
-        .subscribe();
-
-      // Also listen to local sync in case user is testing across tabs
-      const unsubsLocal = localSync.subscribe('CUSTOMERS_UPDATED', (data) => {
-        const list = data as Customer[];
-        const updated = list.find((c) => c.Id === customerId);
-        if (updated) onCustomerChange(updated);
+    let unsubFirestore: (() => void) | null = null;
+    try {
+      unsubFirestore = onSnapshot(doc(db, 'Customers', customerId), (snap) => {
+        if (snap.exists()) {
+          onCustomerChange(snap.data() as Customer);
+        }
       });
-
-      return () => {
-        if (supabase) supabase.removeChannel(channel);
-        unsubsLocal();
-      };
+    } catch (err) {
+      console.warn('Firestore customer subscribe failed:', err);
     }
 
-    // 2. Local Sync engine fallback
-    const unsubs = localSync.subscribe('CUSTOMERS_UPDATED', (data) => {
+    const unsubLocal = localSync.subscribe('CUSTOMERS_UPDATED', (data) => {
       const list = data as Customer[];
       const updated = list.find((c) => c.Id === customerId);
       if (updated) onCustomerChange(updated);
     });
 
-    return unsubs;
+    return () => {
+      if (unsubFirestore) unsubFirestore();
+      unsubLocal();
+    };
   }
 
   static subscribeToSettings(onSettingsChange: (settings: ShopSettings) => void): () => void {
-    if (isSupabaseConfigured() && supabase) {
-      const channel = supabase
-        .channel(`settings-realtime-${Date.now()}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'ShopSettings',
-          },
-          (payload) => {
-            if (payload.new) {
-              onSettingsChange(payload.new as ShopSettings);
-            }
-          }
-        )
-        .subscribe();
-
-      const unsubsLocal = localSync.subscribe('SETTINGS_UPDATED', (data) => {
-        onSettingsChange(data as ShopSettings);
+    let unsubFirestore: (() => void) | null = null;
+    try {
+      unsubFirestore = onSnapshot(doc(db, 'ShopSettings', 'default'), (snap) => {
+        if (snap.exists()) {
+          onSettingsChange(snap.data() as ShopSettings);
+        }
       });
-
-      return () => {
-        if (supabase) supabase.removeChannel(channel);
-        unsubsLocal();
-      };
+    } catch (err) {
+      console.warn('Firestore settings subscribe failed:', err);
     }
 
-    return localSync.subscribe('SETTINGS_UPDATED', (data) => {
+    const unsubLocal = localSync.subscribe('SETTINGS_UPDATED', (data) => {
       onSettingsChange(data as ShopSettings);
     });
+
+    return () => {
+      if (unsubFirestore) unsubFirestore();
+      unsubLocal();
+    };
   }
 
   static subscribeToCustomersList(onListChange: (customers: Customer[]) => void): () => void {
-    if (isSupabaseConfigured() && supabase) {
-      const channel = supabase
-        .channel(`customers-list-realtime-${Date.now()}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'Customers',
-          },
-          async () => {
-            const list = await this.getAllCustomers();
-            onListChange(list);
-          }
-        )
-        .subscribe();
-
-      const unsubsLocal = localSync.subscribe('CUSTOMERS_UPDATED', (data) => {
-        onListChange(data as Customer[]);
+    let unsubFirestore: (() => void) | null = null;
+    try {
+      unsubFirestore = onSnapshot(collection(db, 'Customers'), (snap) => {
+        const list: Customer[] = [];
+        snap.forEach((d) => list.push(d.data() as Customer));
+        onListChange(list);
       });
-
-      return () => {
-        if (supabase) supabase.removeChannel(channel);
-        unsubsLocal();
-      };
+    } catch (err) {
+      console.warn('Firestore customers list subscribe failed:', err);
     }
 
-    return localSync.subscribe('CUSTOMERS_UPDATED', (data) => {
+    const unsubLocal = localSync.subscribe('CUSTOMERS_UPDATED', (data) => {
       onListChange(data as Customer[]);
     });
+
+    return () => {
+      if (unsubFirestore) unsubFirestore();
+      unsubLocal();
+    };
   }
 }
