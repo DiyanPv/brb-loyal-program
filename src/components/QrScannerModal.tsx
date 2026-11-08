@@ -30,9 +30,15 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
   const hasScannedRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Lock body scroll on iOS/desktop while modal is open
+  // Lock body scroll on iOS/desktop while modal is open (prevent touchmove for complete iOS Safari lock)
   useEffect(() => {
     if (!isOpen) return;
+
+    const preventTouch = (e: TouchEvent) => {
+      // Allow touching form inputs if in manual mode
+      if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+      e.preventDefault();
+    };
 
     const originalOverflow = document.body.style.overflow;
     const originalPosition = document.body.style.position;
@@ -41,10 +47,13 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
     document.body.style.overflow = 'hidden';
     document.body.style.width = '100%';
 
+    window.addEventListener('touchmove', preventTouch, { passive: false });
+
     return () => {
       document.body.style.overflow = originalOverflow;
       document.body.style.position = originalPosition;
       document.body.style.width = originalWidth;
+      window.removeEventListener('touchmove', preventTouch);
     };
   }, [isOpen]);
 
@@ -82,11 +91,12 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
 
       stopCamera();
 
+      // Show visual confirmation for 950ms so barber clearly sees the success screen
       setTimeout(() => {
         onScanSuccess(codeText);
         onClose();
         setIsScanSuccess(false);
-      }, 350);
+      }, 950);
     },
     [onScanSuccess, onClose, stopCamera]
   );
@@ -321,7 +331,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[99999] h-[100dvh] w-screen flex items-center justify-center p-3 sm:p-4 bg-black/90 backdrop-blur-md overscroll-none touch-none select-none animate-fade-in"
+      className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md select-none touch-none animate-fade-in"
       style={{
         position: 'fixed',
         top: 0,
@@ -351,7 +361,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
       />
 
       <div
-        className="relative w-full max-w-sm bg-panel border border-line rounded-2xl p-4 sm:p-5 shadow-2xl overflow-hidden my-auto max-h-[92dvh] flex flex-col justify-between"
+        className="relative w-full max-w-[340px] sm:max-w-sm bg-panel border border-line rounded-2xl p-4 sm:p-5 shadow-2xl overflow-hidden flex flex-col pointer-events-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header Tabs */}
@@ -425,7 +435,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
               </div>
             )}
 
-            <div className="relative w-full rounded-xl overflow-hidden border-2 border-acid/50 bg-black min-h-[260px] aspect-square flex items-center justify-center">
+            <div className="relative w-full max-w-[270px] sm:max-w-[300px] aspect-square mx-auto rounded-xl overflow-hidden border-2 border-acid/60 bg-black flex items-center justify-center shadow-lg">
               <video
                 ref={videoRef}
                 className="w-full h-full object-cover rounded-xl"
@@ -436,12 +446,14 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
 
               {/* Instant Scan Success Confirmation Overlay */}
               {isScanSuccess && (
-                <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-acid/95 text-ink rounded-xl font-mono animate-fade-in select-none">
-                  <div className="w-14 h-14 rounded-full bg-ink text-acid flex items-center justify-center mb-2 shadow-2xl animate-bounce">
-                    <span className="text-2xl font-black">✓</span>
+                <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-acid/95 text-ink rounded-xl font-mono animate-fade-in select-none px-4 text-center">
+                  <div className="w-16 h-16 rounded-full bg-ink text-acid flex items-center justify-center mb-3 shadow-2xl animate-bounce border-2 border-ink">
+                    <span className="text-3xl font-black">✓</span>
                   </div>
-                  <p className="text-base font-black tracking-wider uppercase">УСПЕШНО СКАНИРАНО!</p>
-                  <p className="text-xs font-bold text-ink/80 mt-1">Добавяне на печат...</p>
+                  <p className="text-lg font-black tracking-wider uppercase">УСПЕШНО СКАНИРАНО!</p>
+                  <p className="text-xs font-bold text-ink/80 mt-1 uppercase tracking-wide">
+                    ДОБАВЯ СЕ ПЕЧАТ...
+                  </p>
                 </div>
               )}
 

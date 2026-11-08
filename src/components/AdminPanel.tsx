@@ -111,6 +111,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToClient }) => {
     }
   }, [isAuthenticated]);
 
+  // Auto-dismiss action feedback after 6 seconds
+  useEffect(() => {
+    if (!actionFeedback) return;
+    const timer = setTimeout(() => {
+      setActionFeedback(null);
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, [actionFeedback]);
+
   // Handle PIN Login
   const handlePinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -374,39 +383,46 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onBackToClient }) => {
         </div>
       </div>
 
-      {/* ACTION FEEDBACK ALERT */}
+      {/* ACTION FEEDBACK FLOATING TOAST (VISIBLE FROM ANYWHERE) */}
       {actionFeedback && (
-        <div
-          className={`p-4 rounded-xl border flex items-center justify-between gap-3 animate-fade-in font-mono text-xs ${
-            actionFeedback.type === 'success'
-              ? 'bg-acid/10 border-acid text-acid'
-              : actionFeedback.type === 'warning'
-              ? 'bg-amber-950/70 border-amber-500 text-amber-200'
-              : 'bg-red-950/70 border-red-500 text-red-200'
-          }`}
-        >
-          <div className="flex items-center space-x-3">
-            {actionFeedback.type === 'success' ? (
-              <CheckCircle className="w-5 h-5 text-acid shrink-0" />
-            ) : (
-              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
-            )}
-            <div>
-              <p className="font-bold">{actionFeedback.message}</p>
-              {actionFeedback.customer && (
-                <p className="opacity-80 text-[11px] mt-0.5">
-                  {actionFeedback.customer.FullName} ({actionFeedback.customer.Phone}) • Текущи печати:{' '}
-                  {actionFeedback.customer.CurrentStamps}/{settings.RequiredStamps}
-                </p>
-              )}
-            </div>
-          </div>
-          <button
-            onClick={() => setActionFeedback(null)}
-            className="underline opacity-80 hover:opacity-100 uppercase text-[10px]"
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[9999] w-full max-w-md px-4 pointer-events-auto animate-fade-in">
+          <div
+            className={`p-4 rounded-2xl border shadow-2xl flex items-center justify-between gap-3 font-mono text-xs backdrop-blur-xl ${
+              actionFeedback.type === 'success'
+                ? 'bg-ink/95 border-acid text-acid shadow-acid-glow'
+                : actionFeedback.type === 'warning'
+                ? 'bg-ink/95 border-amber-500 text-amber-200 shadow-xl'
+                : 'bg-ink/95 border-red-500 text-red-200 shadow-xl'
+            }`}
           >
-            Затвори
-          </button>
+            <div className="flex items-center space-x-3">
+              {actionFeedback.type === 'success' ? (
+                <div className="w-8 h-8 rounded-full bg-acid/20 border border-acid flex items-center justify-center shrink-0">
+                  <CheckCircle className="w-5 h-5 text-acid" />
+                </div>
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-amber-400" />
+                </div>
+              )}
+              <div>
+                <p className="font-bold text-sm text-bone">{actionFeedback.message}</p>
+                {actionFeedback.customer && (
+                  <p className="opacity-90 text-[11px] mt-0.5 text-acid font-bold">
+                    {actionFeedback.customer.FullName} ({actionFeedback.customer.Phone}) • Печати:{' '}
+                    {actionFeedback.customer.CurrentStamps}/{settings.RequiredStamps}
+                  </p>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => setActionFeedback(null)}
+              className="chip !px-2 !py-1 text-bone hover:!text-acid ml-2 shrink-0"
+              title="Затвори"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 
